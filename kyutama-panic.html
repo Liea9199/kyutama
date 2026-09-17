@@ -1,0 +1,555 @@
+<title>玖球パニック</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Nunito:wght@400;600;700;800&display=swap">
+<style>
+  :root {
+    --sky-top: #BFE8F5;
+    --sky-mid: #DFF3E4;
+    --grass: #7CB342;
+    --grass-deep: #4C7A22;
+    --dirt: #8A5A34;
+    --dirt-deep: #4E301B;
+    --dirt-rim: #A97646;
+    --mole-fur: #B4A3E8;
+    --mole-fur-light: #E9E1FB;
+    --mole-fur-dark: #8C76C9;
+    --mole-fur-mid: #DAD7E8;
+    --ink: #3A2A1D;
+    --ink-soft: #6B5B45;
+    --card-bg: #FFF8EC;
+    --card-border: #EAD9B4;
+    --stat-bg: #F5E9CE;
+    --accent: #FF7A3D;
+    --accent-shadow: #C7501B;
+    --accent-ink: #FFFFFF;
+    --shadow: rgba(58, 42, 29, 0.28);
+    --overlay-bg: rgba(255, 248, 236, 0.88);
+    --orb-grad: radial-gradient(circle at 35% 32%, #FFF6D8 0%, #FFD27A 55%, #FF9F45 100%);
+    --orb-glow: rgba(255, 170, 60, 0.55);
+    --star-opacity: 0;
+    --font-display: 'Baloo 2', 'Hiragino Maru Gothic ProN', 'Yu Gothic', system-ui, sans-serif;
+    --font-body: 'Nunito', 'Hiragino Sans', 'Yu Gothic', system-ui, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --sky-top: #0B1330;
+      --sky-mid: #17233F;
+      --grass: #2E5233;
+      --grass-deep: #16321B;
+      --dirt: #4A3221;
+      --dirt-deep: #241708;
+      --dirt-rim: #5C4029;
+      --mole-fur: #9C88D6;
+      --mole-fur-light: #CFC1F2;
+      --mole-fur-dark: #6E5AA8;
+      --mole-fur-mid: #B8B4CE;
+      --ink: #F3EAD9;
+      --ink-soft: #C4B79A;
+      --card-bg: #17213A;
+      --card-border: #2E3C5E;
+      --stat-bg: #202E4F;
+      --accent: #FF9A5C;
+      --accent-shadow: #B85420;
+      --accent-ink: #241205;
+      --shadow: rgba(0, 0, 0, 0.55);
+      --overlay-bg: rgba(15, 20, 38, 0.86);
+      --orb-grad: radial-gradient(circle at 35% 32%, #FFFFFF 0%, #DCE6FF 55%, #9FB4E8 100%);
+      --orb-glow: rgba(160, 190, 255, 0.55);
+      --star-opacity: 0.85;
+    }
+  }
+  :root[data-theme="dark"] {
+    --sky-top: #0B1330;
+    --sky-mid: #17233F;
+    --grass: #2E5233;
+    --grass-deep: #16321B;
+    --dirt: #4A3221;
+    --dirt-deep: #241708;
+    --dirt-rim: #5C4029;
+    --mole-fur: #9C88D6;
+    --mole-fur-light: #CFC1F2;
+    --mole-fur-dark: #6E5AA8;
+    --mole-fur-mid: #B8B4CE;
+    --ink: #F3EAD9;
+    --ink-soft: #C4B79A;
+    --card-bg: #17213A;
+    --card-border: #2E3C5E;
+    --stat-bg: #202E4F;
+    --accent: #FF9A5C;
+    --accent-shadow: #B85420;
+    --accent-ink: #241205;
+    --shadow: rgba(0, 0, 0, 0.55);
+    --overlay-bg: rgba(15, 20, 38, 0.86);
+    --orb-grad: radial-gradient(circle at 35% 32%, #FFFFFF 0%, #DCE6FF 55%, #9FB4E8 100%);
+    --orb-glow: rgba(160, 190, 255, 0.55);
+    --star-opacity: 0.85;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { height: 100%; }
+
+  body {
+    margin: 0;
+    font-family: var(--font-body);
+    color: var(--ink);
+    background-color: var(--grass-deep);
+    background-image: linear-gradient(
+      to bottom,
+      var(--sky-top) 0%,
+      var(--sky-mid) 55%,
+      var(--grass) 82%,
+      transparent 100%
+    );
+    background-repeat: no-repeat;
+    background-position: top center;
+    background-size: 100% 260px;
+    min-height: 100%;
+    display: flex;
+    justify-content: center;
+  }
+
+  .scene {
+    position: relative;
+    width: 100%;
+    max-width: 560px;
+    padding-inline: 16px;
+    padding-block: 22px 34px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
+  }
+
+  .sky-deco { position: absolute; inset: 0 0 auto 0; height: 32%; overflow: hidden; pointer-events: none; z-index: 0; }
+  .orb {
+    position: absolute; top: 8%; right: 9%;
+    width: 15%; aspect-ratio: 1; border-radius: 50%;
+    background: var(--orb-grad);
+    box-shadow: 0 0 34px var(--orb-glow);
+  }
+  .stars {
+    position: absolute; inset: 0;
+    opacity: var(--star-opacity);
+    transition: opacity .5s ease;
+    background-image:
+      radial-gradient(1.6px 1.6px at 14% 22%, #fff, transparent 60%),
+      radial-gradient(1.4px 1.4px at 30% 55%, #fff, transparent 60%),
+      radial-gradient(2px 2px at 46% 18%, #fff, transparent 60%),
+      radial-gradient(1.4px 1.4px at 62% 40%, #fff, transparent 60%),
+      radial-gradient(1.8px 1.8px at 75% 15%, #fff, transparent 60%),
+      radial-gradient(1.4px 1.4px at 85% 48%, #fff, transparent 60%),
+      radial-gradient(1.6px 1.6px at 6% 45%, #fff, transparent 60%);
+    background-repeat: no-repeat;
+  }
+
+  h1 {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: clamp(1.6rem, 5.2vw, 2.3rem);
+    margin: 0;
+    text-wrap: balance;
+    color: var(--ink);
+    letter-spacing: .01em;
+  }
+
+  .tagline {
+    margin: 0;
+    font-size: clamp(.82rem, 2.2vw, .95rem);
+    color: var(--ink-soft);
+    font-weight: 600;
+  }
+
+  .hud {
+    position: relative; z-index: 2;
+    width: 100%; max-width: 420px;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 22px;
+    padding: 16px 18px;
+    box-shadow: 0 12px 26px var(--shadow);
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    text-align: center;
+  }
+
+  .stats { display: flex; gap: 10px; width: 100%; justify-content: center; flex-wrap: wrap; }
+  .stat {
+    background: var(--stat-bg);
+    border-radius: 14px;
+    padding: 8px 16px;
+    min-width: 84px;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .stat-label {
+    font-size: .66rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+  .stat-value {
+    font-family: var(--font-display); font-weight: 700;
+    font-size: clamp(1.15rem, 3.2vw, 1.5rem);
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+  }
+
+  .field-wrap { position: relative; width: 100%; max-width: 420px; }
+
+  .field {
+    position: relative; z-index: 1;
+    width: 100%; aspect-ratio: 1;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    gap: clamp(8px, 3vw, 16px);
+    background: var(--grass-deep);
+    border-radius: 18px;
+  }
+
+  .hole { position: relative; }
+
+  .dirt {
+    position: absolute; left: 50%; bottom: 9%;
+    transform: translateX(-50%);
+    width: 96%; height: 62%;
+    border-radius: 50%;
+    background: radial-gradient(ellipse at 50% 74%, var(--dirt-deep) 0%, var(--dirt) 55%, var(--dirt-rim) 100%);
+    box-shadow: inset 0 6px 10px var(--dirt-deep), 0 3px 0 var(--dirt-rim);
+  }
+  .dirt::after {
+    content: "";
+    position: absolute; left: 50%; top: 12%; transform: translateX(-50%);
+    width: 58%; height: 46%;
+    border-radius: 50%;
+    background: radial-gradient(ellipse at 50% 40%, var(--dirt-deep) 0%, #000 130%);
+    opacity: .55;
+  }
+
+  .peek {
+    position: absolute; left: 50%; bottom: 0%;
+    transform: translateX(-50%);
+    width: 60%; height: 92%;
+    overflow: hidden;
+    z-index: 2;
+  }
+
+  .mole-btn {
+    all: unset;
+    display: block;
+    position: absolute; left: 0; bottom: 35%; width: 100%;
+    cursor: pointer;
+    transform: translateY(165%);
+    transition: transform .16s cubic-bezier(.34, 1.56, .64, 1);
+    filter: drop-shadow(0 4px 3px var(--shadow));
+  }
+  .mole-btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 50%; }
+
+  .hole.up .mole-btn { transform: translateY(0%); }
+  .hole.whacked .mole-btn { transform: translateY(14%) scaleY(.86); }
+
+  .mole-svg { width: 100%; height: auto; display: block; }
+
+  .score-pop {
+    position: absolute; left: 50%; top: 6%;
+    transform: translate(-50%, 0);
+    font-family: var(--font-display); font-weight: 800;
+    font-size: 1.3rem; color: var(--accent);
+    text-shadow: 0 2px 0 rgba(0,0,0,.18);
+    pointer-events: none; z-index: 6;
+    animation: floatUp .7s ease-out forwards;
+  }
+  @keyframes floatUp {
+    from { opacity: 1; transform: translate(-50%, 0); }
+    to { opacity: 0; transform: translate(-50%, -34px); }
+  }
+
+  .overlay {
+    position: absolute; inset: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--overlay-bg);
+    backdrop-filter: blur(3px);
+    border-radius: 18px;
+    padding: 16px; text-align: center;
+  }
+  .overlay[hidden] { display: none; }
+  .overlay-card { display: flex; flex-direction: column; align-items: center; gap: 10px; max-width: 280px; }
+  .overlay-card h2 { margin: 0; font-family: var(--font-display); font-size: clamp(1.2rem, 4vw, 1.5rem); }
+  .overlay-card p { margin: 0; color: var(--ink-soft); font-size: .9rem; font-weight: 600; }
+  .result-score { font-family: var(--font-display); font-weight: 800; font-size: 2rem; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .new-record { font-size: .8rem; font-weight: 800; color: var(--accent); letter-spacing: .04em; }
+
+  .btn {
+    font-family: var(--font-display); font-weight: 700; font-size: 1.02rem;
+    padding: .78em 1.9em; border-radius: 999px; border: none; cursor: pointer;
+    background: var(--accent); color: var(--accent-ink);
+    box-shadow: 0 6px 0 var(--accent-shadow), 0 10px 18px var(--shadow);
+    transition: transform .12s, box-shadow .12s;
+  }
+  .btn:hover { filter: brightness(1.04); }
+  .btn:active { transform: translateY(4px); box-shadow: 0 2px 0 var(--accent-shadow), 0 4px 8px var(--shadow); }
+  .btn:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+
+  .hint {
+    position: relative; z-index: 1;
+    margin: 0; max-width: 420px; text-align: center;
+    font-size: .8rem; font-weight: 600; color: #F2F5F0;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .mole-btn, .btn, .score-pop, .stars { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+  }
+</style>
+
+<div class="scene">
+  <div class="sky-deco" aria-hidden="true">
+    <div class="orb"></div>
+    <div class="stars"></div>
+  </div>
+
+  <header class="hud">
+    <h1>玖球パニック</h1>
+    <p class="tagline">庭に出てきた玖球をタップして叩こう!</p>
+    <div class="stats">
+      <div class="stat"><span class="stat-label">スコア</span><span class="stat-value" id="score">0</span></div>
+      <div class="stat"><span class="stat-label">残り秒</span><span class="stat-value" id="timeLeft">30</span></div>
+      <div class="stat"><span class="stat-label">ハイスコア</span><span class="stat-value" id="highScore">0</span></div>
+    </div>
+  </header>
+
+  <div class="field-wrap">
+    <div class="field" id="field"></div>
+    <div class="overlay" id="overlay">
+      <div class="overlay-card">
+        <h2 id="overlayTitle">準備はいい?</h2>
+        <p id="overlayMsg">30秒間で、できるだけたくさん玖球を叩こう!</p>
+        <button class="btn" id="actionBtn">スタート</button>
+      </div>
+    </div>
+  </div>
+
+  <p class="hint">顔を出した玖球をクリック(タップ)!1匹たたくごとに1点。</p>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var HOLE_COUNT = 9;
+  var GAME_DURATION = 30;
+
+  var field = document.getElementById('field');
+  var scoreEl = document.getElementById('score');
+  var timeEl = document.getElementById('timeLeft');
+  var highScoreEl = document.getElementById('highScore');
+  var overlay = document.getElementById('overlay');
+  var overlayTitle = document.getElementById('overlayTitle');
+  var overlayMsg = document.getElementById('overlayMsg');
+  var actionBtn = document.getElementById('actionBtn');
+
+  var state = { playing: false, score: 0, timeLeft: GAME_DURATION, highScore: 0 };
+  var holes = [];
+  var spawnTimer = null;
+  var countdownTimer = null;
+  var audioCtx = null;
+
+  function lerp(a, b, t) { return a + (b - a) * Math.max(0, Math.min(1, t)); }
+
+  function loadHighScore() {
+    try {
+      var v = parseInt(localStorage.getItem('mogura-panic-highscore'), 10);
+      return isNaN(v) ? 0 : v;
+    } catch (e) { return 0; }
+  }
+  function saveHighScore(v) {
+    try { localStorage.setItem('mogura-panic-highscore', String(v)); } catch (e) {}
+  }
+
+  function buildHoles() {
+    function moleSvg(i) {
+      var gid = 'tailGrad' + i;
+      var gidEarL = 'earGradL' + i;
+      var gidEarR = 'earGradR' + i;
+      return '<svg class="mole-svg" viewBox="-18 -32 156 148" aria-hidden="true">' +
+      '<defs>' +
+      '<linearGradient id="' + gid + '" x1="92" y1="98" x2="106" y2="6" gradientUnits="userSpaceOnUse">' +
+      '<stop offset="0%" stop-color="var(--mole-fur)"/>' +
+      '<stop offset="50%" stop-color="var(--mole-fur-mid)"/>' +
+      '<stop offset="100%" stop-color="var(--mole-fur)"/>' +
+      '</linearGradient>' +
+      '<linearGradient id="' + gidEarL + '" x1="45" y1="35" x2="45" y2="-32" gradientUnits="userSpaceOnUse">' +
+      '<stop offset="0%" stop-color="var(--mole-fur)"/>' +
+      '<stop offset="100%" stop-color="#FFFFFF"/>' +
+      '</linearGradient>' +
+      '<linearGradient id="' + gidEarR + '" x1="75" y1="35" x2="75" y2="-32" gradientUnits="userSpaceOnUse">' +
+      '<stop offset="0%" stop-color="var(--mole-fur)"/>' +
+      '<stop offset="100%" stop-color="#FFFFFF"/>' +
+      '</linearGradient>' +
+      '</defs>' +
+      '<path d="M33,34 L41,-24 Q45,-32 49,-24 L59,36 Z" fill="url(#' + gidEarL + ')"/>' +
+      '<path d="M37,30 L43,-14 Q45,-20 47,-14 L55,32 Z" fill="var(--mole-fur-light)"/>' +
+      '<path d="M87,34 L79,-24 Q75,-32 71,-24 L61,36 Z" fill="url(#' + gidEarR + ')"/>' +
+      '<path d="M83,30 L77,-14 Q75,-20 73,-14 L65,32 Z" fill="var(--mole-fur-light)"/>' +
+      '<path d="M92,98 C124,101 136,58 114,26 L106,6 L99,28 C90,48 88,74 92,98 Z" fill="url(#' + gid + ')"/>' +
+      '<ellipse cx="43" cy="105" rx="15" ry="9.5" fill="var(--mole-fur)"/>' +
+      '<ellipse cx="77" cy="105" rx="15" ry="9.5" fill="var(--mole-fur)"/>' +
+      '<ellipse cx="10" cy="76" rx="9" ry="6.5" fill="var(--mole-fur)"/>' +
+      '<ellipse cx="110" cy="76" rx="9" ry="6.5" fill="var(--mole-fur)"/>' +
+      '<ellipse cx="60" cy="66" rx="48" ry="44" fill="var(--mole-fur)"/>' +
+      '<ellipse cx="34" cy="76" rx="7" ry="4.5" fill="#F3A6C4" opacity=".55"/>' +
+      '<ellipse cx="86" cy="76" rx="7" ry="4.5" fill="#F3A6C4" opacity=".55"/>' +
+      '<path d="M52,66 Q42,54 34,58" fill="none" stroke="var(--ink)" stroke-width="4.5" stroke-linecap="round"/>' +
+      '<path d="M68,66 Q78,54 86,58" fill="none" stroke="var(--ink)" stroke-width="4.5" stroke-linecap="round"/>' +
+      '<circle cx="83" cy="72" r="1.8" fill="var(--ink)"/>' +
+      '<path d="M50,84 Q53,92 57,84 Q60,80 63,84 Q67,92 70,84" fill="none" stroke="var(--ink)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '</svg>';
+    }
+
+    for (var i = 0; i < HOLE_COUNT; i++) {
+      var hole = document.createElement('div');
+      hole.className = 'hole';
+      hole.innerHTML =
+        '<div class="dirt"></div>' +
+        '<div class="peek"><button type="button" class="mole-btn" aria-label="玖球をたたく">' + moleSvg(i) + '</button></div>';
+      field.appendChild(hole);
+      var btn = hole.querySelector('.mole-btn');
+      btn.addEventListener('click', function (h) {
+        return function () { whack(h); };
+      }(hole));
+      holes.push(hole);
+    }
+  }
+
+  function ensureAudio() {
+    if (!audioCtx) {
+      try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+    } else if (audioCtx.state === 'suspended') {
+      try { audioCtx.resume(); } catch (e) {}
+    }
+  }
+
+  function playPop() {
+    if (!audioCtx) return;
+    try {
+      var t = audioCtx.currentTime;
+      var osc = audioCtx.createOscillator();
+      var gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(520, t);
+      osc.frequency.exponentialRampToValueAtTime(260, t + 0.12);
+      gain.gain.setValueAtTime(0.16, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + 0.16);
+    } catch (e) {}
+  }
+
+  function progress() {
+    return (GAME_DURATION - state.timeLeft) / GAME_DURATION;
+  }
+
+  function showMole(hole) {
+    hole.dataset.up = '1';
+    hole.classList.add('up');
+    var upTime = lerp(1150, 600, progress()) + Math.random() * 250;
+    hole._hideTimer = setTimeout(function () { hideMole(hole); }, upTime);
+  }
+
+  function hideMole(hole) {
+    hole.classList.remove('up', 'whacked');
+    delete hole.dataset.up;
+    if (hole._hideTimer) { clearTimeout(hole._hideTimer); hole._hideTimer = null; }
+  }
+
+  function spawnLoop() {
+    if (!state.playing) return;
+    var free = holes.filter(function (h) { return !h.dataset.up; });
+    if (free.length) {
+      showMole(free[Math.floor(Math.random() * free.length)]);
+    }
+    var delay = lerp(820, 360, progress()) + Math.random() * 260;
+    spawnTimer = setTimeout(spawnLoop, delay);
+  }
+
+  function floatScore(hole, points) {
+    var el = document.createElement('span');
+    el.className = 'score-pop';
+    el.textContent = '+' + points;
+    hole.appendChild(el);
+    el.addEventListener('animationend', function () { el.remove(); });
+  }
+
+  function whack(hole) {
+    if (!state.playing) return;
+    if (hole.dataset.up !== '1') return;
+    var points = 1;
+    state.score += points;
+    scoreEl.textContent = state.score;
+    floatScore(hole, points);
+    playPop();
+    hole.classList.add('whacked');
+    setTimeout(function () { hideMole(hole); }, 90);
+  }
+
+  function updateHud() {
+    scoreEl.textContent = state.score;
+    timeEl.textContent = state.timeLeft;
+    highScoreEl.textContent = state.highScore;
+  }
+
+  function startGame() {
+    ensureAudio();
+    state.playing = true;
+    state.score = 0;
+    state.timeLeft = GAME_DURATION;
+    updateHud();
+    overlay.hidden = true;
+    holes.forEach(hideMole);
+    spawnTimer = setTimeout(spawnLoop, 400);
+    countdownTimer = setInterval(function () {
+      state.timeLeft -= 1;
+      timeEl.textContent = state.timeLeft;
+      if (state.timeLeft <= 0) endGame();
+    }, 1000);
+  }
+
+  function endGame() {
+    state.playing = false;
+    clearTimeout(spawnTimer);
+    clearInterval(countdownTimer);
+    holes.forEach(hideMole);
+
+    var isRecord = state.score > state.highScore;
+    if (isRecord) {
+      state.highScore = state.score;
+      saveHighScore(state.highScore);
+      highScoreEl.textContent = state.highScore;
+    }
+
+    overlayTitle.textContent = 'タイムアップ!';
+    overlayMsg.innerHTML = 'スコア: <span class="result-score">' + state.score + '</span>' +
+      (isRecord ? '<br><span class="new-record">🎉 ハイスコア更新!</span>' : '');
+    actionBtn.textContent = 'もう一度あそぶ';
+    overlay.hidden = false;
+  }
+
+  actionBtn.addEventListener('click', startGame);
+
+  function boot(data) {
+    state.highScore = (data && typeof data.highScore === 'number') ? data.highScore : loadHighScore();
+    buildHoles();
+    updateHud();
+  }
+
+  try {
+    if (window.claude && window.claude.hot && window.claude.hot.snapshot) {
+      window.claude.hot.snapshot(function () { return { highScore: state.highScore }; });
+    }
+    if (window.claude && window.claude.hot && window.claude.hot.ready) {
+      window.claude.hot.ready(boot);
+    } else {
+      boot(window.claude && window.claude.hot ? window.claude.hot.data : null);
+    }
+  } catch (e) {
+    boot(null);
+  }
+})();
+</script>
