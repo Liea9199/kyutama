@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>玖球パニック</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Nunito:wght@400;600;700;800&display=swap">
+<link rel="stylesheet" href="../style.css">
+<style>
+  .field-wrap { position: relative; width: 100%; max-width: 420px; }
+
+  .field {
+    position: relative; z-index: 1;
+    width: 100%; aspect-ratio: 1;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    gap: clamp(8px, 3vw, 16px);
+    background: var(--grass-deep);
+    border-radius: 18px;
+  }
+
+  .hole { position: relative; }
+
+  .dirt {
+    position: absolute; left: 50%; bottom: 9%;
+    transform: translateX(-50%);
+    width: 96%; height: 62%;
+    border-radius: 50%;
+    background: radial-gradient(ellipse at 50% 74%, var(--dirt-deep) 0%, var(--dirt) 55%, var(--dirt-rim) 100%);
+    box-shadow: inset 0 6px 10px var(--dirt-deep), 0 3px 0 var(--dirt-rim);
+  }
+  .dirt::after {
+    content: "";
+    position: absolute; left: 50%; top: 12%; transform: translateX(-50%);
+    width: 58%; height: 46%;
+    border-radius: 50%;
+    background: radial-gradient(ellipse at 50% 40%, var(--dirt-deep) 0%, #000 130%);
+    opacity: .55;
+  }
+
+  .peek {
+    position: absolute; left: 50%; bottom: 0%;
+    transform: translateX(-50%);
+    width: 60%; height: 92%;
+    overflow: hidden;
+    z-index: 2;
+  }
+
+  .mole-btn {
+    all: unset;
+    display: block;
+    position: absolute; left: 0; bottom: 35%; width: 100%;
+    cursor: pointer;
+    transform: translateY(165%);
+    transition: transform .16s cubic-bezier(.34, 1.56, .64, 1);
+    filter: drop-shadow(0 4px 3px var(--shadow));
+  }
+  .mole-btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 50%; }
+
+  .hole.up .mole-btn { transform: translateY(0%); }
+  .hole.whacked .mole-btn { transform: translateY(14%) scaleY(.86); }
+
+  .mole-svg { width: 100%; height: auto; display: block; }
+
+  .score-pop {
+    position: absolute; left: 50%; top: 6%;
+    transform: translate(-50%, 0);
+    font-family: var(--font-display); font-weight: 800;
+    font-size: 1.3rem; color: var(--accent);
+    text-shadow: 0 2px 0 rgba(0,0,0,.18);
+    pointer-events: none; z-index: 6;
+    animation: floatUp .7s ease-out forwards;
+  }
+  @keyframes floatUp {
+    from { opacity: 1; transform: translate(-50%, 0); }
+    to { opacity: 0; transform: translate(-50%, -34px); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .mole-btn, .score-pop { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="scene">
+  <div class="sky-deco" aria-hidden="true">
+    <div class="orb"></div>
+    <div class="stars"></div>
+  </div>
+
+  <a class="back-link" href="../index.html">← ミニゲーム一覧</a>
+
+  <header class="hud">
+    <h1>玖球パニック</h1>
+    <p class="tagline">庭に出てきた玖球をタップして叩こう!</p>
+    <div class="stats">
+      <div class="stat"><span class="stat-label">スコア</span><span class="stat-value" id="score">0</span></div>
+      <div class="stat"><span class="stat-label">残り秒</span><span class="stat-value" id="timeLeft">30</span></div>
+      <div class="stat"><span class="stat-label">ハイスコア</span><span class="stat-value" id="highScore">0</span></div>
+    </div>
+  </header>
+
+  <div class="field-wrap">
+    <div class="field" id="field"></div>
+    <div class="overlay" id="overlay">
+      <div class="overlay-card">
+        <h2 id="overlayTitle">準備はいい?</h2>
+        <p id="overlayMsg">30秒間で、できるだけたくさん玖球を叩こう!</p>
+        <button class="btn" id="actionBtn">スタート</button>
+      </div>
+    </div>
+  </div>
+
+  <p class="hint">顔を出した玖球をクリック(タップ)!1匹たたくごとに1点。</p>
+</div>
+
+<script src="mole-icon.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var HOLE_COUNT = 9;
+  var GAME_DURATION = 30;
+
+  var field = document.getElementById('field');
+  var scoreEl = document.getElementById('score');
+  var timeEl = document.getElementById('timeLeft');
+  var highScoreEl = document.getElementById('highScore');
+  var overlay = document.getElementById('overlay');
+  var overlayTitle = document.getElementById('overlayTitle');
+  var overlayMsg = document.getElementById('overlayMsg');
+  var actionBtn = document.getElementById('actionBtn');
+
+  var state = { playing: false, score: 0, timeLeft: GAME_DURATION, highScore: 0 };
+  var holes = [];
+  var spawnTimer = null;
+  var countdownTimer = null;
+  var audioCtx = null;
+
+  function lerp(a, b, t) { return a + (b - a) * Math.max(0, Math.min(1, t)); }
+
+  function loadHighScore() {
+    try {
+      var v = parseInt(localStorage.getItem('mogura-panic-highscore'), 10);
+      return isNaN(v) ? 0 : v;
+    } catch (e) { return 0; }
+  }
+  function saveHighScore(v) {
+    try { localStorage.setItem('mogura-panic-highscore', String(v)); } catch (e) {}
+  }
+
+  function buildHoles() {
+    for (var i = 0; i < HOLE_COUNT; i++) {
+      var hole = document.createElement('div');
+      hole.className = 'hole';
+      hole.innerHTML =
+        '<div class="dirt"></div>' +
+        '<div class="peek"><button type="button" class="mole-btn" aria-label="玖球をたたく">' + moleSvgMarkup(i) + '</button></div>';
+      field.appendChild(hole);
+      var btn = hole.querySelector('.mole-btn');
+      btn.addEventListener('click', function (h) {
+        return function () { whack(h); };
+      }(hole));
+      holes.push(hole);
+    }
+  }
+
+  function ensureAudio() {
+    if (!audioCtx) {
+      try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+    } else if (audioCtx.state === 'suspended') {
+      try { audioCtx.resume(); } catch (e) {}
+    }
+  }
+
+  function playPop() {
+    if (!audioCtx) return;
+    try {
+      var t = audioCtx.currentTime;
+      var osc = audioCtx.createOscillator();
+      var gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(520, t);
+      osc.frequency.exponentialRampToValueAtTime(260, t + 0.12);
+      gain.gain.setValueAtTime(0.16, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + 0.16);
+    } catch (e) {}
+  }
+
+  function progress() {
+    return (GAME_DURATION - state.timeLeft) / GAME_DURATION;
+  }
+
+  function showMole(hole) {
+    hole.dataset.up = '1';
+    hole.classList.add('up');
+    var upTime = lerp(1150, 600, progress()) + Math.random() * 250;
+    hole._hideTimer = setTimeout(function () { hideMole(hole); }, upTime);
+  }
+
+  function hideMole(hole) {
+    hole.classList.remove('up', 'whacked');
+    delete hole.dataset.up;
+    if (hole._hideTimer) { clearTimeout(hole._hideTimer); hole._hideTimer = null; }
+  }
+
+  function spawnLoop() {
+    if (!state.playing) return;
+    var free = holes.filter(function (h) { return !h.dataset.up; });
+    if (free.length) {
+      showMole(free[Math.floor(Math.random() * free.length)]);
+    }
+    var delay = lerp(820, 360, progress()) + Math.random() * 260;
+    spawnTimer = setTimeout(spawnLoop, delay);
+  }
+
+  function floatScore(hole, points) {
+    var el = document.createElement('span');
+    el.className = 'score-pop';
+    el.textContent = '+' + points;
+    hole.appendChild(el);
+    el.addEventListener('animationend', function () { el.remove(); });
+  }
+
+  function whack(hole) {
+    if (!state.playing) return;
+    if (hole.dataset.up !== '1') return;
+    var points = 1;
+    state.score += points;
+    scoreEl.textContent = state.score;
+    floatScore(hole, points);
+    playPop();
+    hole.classList.add('whacked');
+    setTimeout(function () { hideMole(hole); }, 90);
+  }
+
+  function updateHud() {
+    scoreEl.textContent = state.score;
+    timeEl.textContent = state.timeLeft;
+    highScoreEl.textContent = state.highScore;
+  }
+
+  function startGame() {
+    ensureAudio();
+    state.playing = true;
+    state.score = 0;
+    state.timeLeft = GAME_DURATION;
+    updateHud();
+    overlay.hidden = true;
+    holes.forEach(hideMole);
+    spawnTimer = setTimeout(spawnLoop, 400);
+    countdownTimer = setInterval(function () {
+      state.timeLeft -= 1;
+      timeEl.textContent = state.timeLeft;
+      if (state.timeLeft <= 0) endGame();
+    }, 1000);
+  }
+
+  function endGame() {
+    state.playing = false;
+    clearTimeout(spawnTimer);
+    clearInterval(countdownTimer);
+    holes.forEach(hideMole);
+
+    var isRecord = state.score > state.highScore;
+    if (isRecord) {
+      state.highScore = state.score;
+      saveHighScore(state.highScore);
+      highScoreEl.textContent = state.highScore;
+    }
+
+    overlayTitle.textContent = 'タイムアップ!';
+    overlayMsg.innerHTML = 'スコア: <span class="result-score">' + state.score + '</span>' +
+      (isRecord ? '<br><span class="new-record">🎉 ハイスコア更新!</span>' : '');
+    actionBtn.textContent = 'もう一度あそぶ';
+    overlay.hidden = false;
+  }
+
+  actionBtn.addEventListener('click', startGame);
+
+  function boot(data) {
+    state.highScore = (data && typeof data.highScore === 'number') ? data.highScore : loadHighScore();
+    buildHoles();
+    updateHud();
+  }
+
+  try {
+    if (window.claude && window.claude.hot && window.claude.hot.snapshot) {
+      window.claude.hot.snapshot(function () { return { highScore: state.highScore }; });
+    }
+    if (window.claude && window.claude.hot && window.claude.hot.ready) {
+      window.claude.hot.ready(boot);
+    } else {
+      boot(window.claude && window.claude.hot ? window.claude.hot.data : null);
+    }
+  } catch (e) {
+    boot(null);
+  }
+})();
+</script>
+</body>
+</html>

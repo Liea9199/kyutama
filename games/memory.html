@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>玖球の神経衰弱</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Nunito:wght@400;600;700;800&display=swap">
+<link rel="stylesheet" href="../style.css">
+<style>
+  .memory-wrap { position: relative; width: 100%; max-width: 420px; }
+
+  .memory-grid {
+    position: relative; z-index: 1;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: clamp(7px, 2.4vw, 12px);
+  }
+
+  .card { aspect-ratio: 3 / 4; perspective: 600px; }
+  .card-inner {
+    position: relative; width: 100%; height: 100%;
+    cursor: pointer;
+    transform-style: preserve-3d;
+    transition: transform .45s cubic-bezier(.34, 1.56, .64, 1);
+  }
+  .card.flipped .card-inner { transform: rotateY(180deg); }
+  .card.matched .card-inner { cursor: default; }
+  .card.matched .card-face-front { box-shadow: 0 0 0 3px var(--accent), 0 4px 10px var(--shadow); }
+
+  .card-face {
+    position: absolute; inset: 0;
+    border-radius: 14px;
+    backface-visibility: hidden;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 10px var(--shadow);
+  }
+  .card-face-back {
+    background: radial-gradient(ellipse at 50% 30%, var(--dirt-rim) 0%, var(--dirt) 55%, var(--dirt-deep) 100%);
+  }
+  .card-face-back::after {
+    content: "?";
+    font-family: var(--font-display); font-weight: 800;
+    font-size: 1.4rem; color: var(--mole-fur-light);
+    opacity: .85;
+  }
+  .card-face-front {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    transform: rotateY(180deg);
+    padding: 10%;
+  }
+  .card-face-front .mole-svg { width: 100%; height: auto; }
+
+  .card:not(.flipped):not(.matched) .card-inner:hover { transform: translateY(-2px) scale(1.02); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .card-inner { transition-duration: .01ms !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="scene">
+  <div class="sky-deco" aria-hidden="true">
+    <div class="orb"></div>
+    <div class="stars"></div>
+  </div>
+
+  <a class="back-link" href="../index.html">← ミニゲーム一覧</a>
+
+  <header class="hud">
+    <h1>玖球の神経衰弱</h1>
+    <p class="tagline">同じ色の玖球のペアを全部見つけよう!</p>
+    <div class="stats">
+      <div class="stat"><span class="stat-label">手数</span><span class="stat-value" id="moves">0</span></div>
+      <div class="stat"><span class="stat-label">時間</span><span class="stat-value" id="timeElapsed">0</span></div>
+      <div class="stat"><span class="stat-label">ベスト手数</span><span class="stat-value" id="bestMoves">--</span></div>
+    </div>
+  </header>
+
+  <div class="memory-wrap">
+    <div class="memory-grid" id="grid"></div>
+    <div class="overlay" id="overlay">
+      <div class="overlay-card">
+        <h2 id="overlayTitle">準備はいい?</h2>
+        <p id="overlayMsg">6組12枚のカードから、同じ色の玖球ペアを全部見つけよう!</p>
+        <button class="btn" id="actionBtn">スタート</button>
+      </div>
+    </div>
+  </div>
+
+  <p class="hint">カードをタップしてめくり、同じ色の玖球を2枚見つけよう。</p>
+</div>
+
+<script src="mole-icon.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var PAIR_COLORS = ['#F4A9C0', '#8EC6F1', '#FFD27A', '#9BE28C', '#C9A3F0', '#FF9F68'];
+  var BEST_KEY = 'kyutama-memory-best-moves';
+
+  var grid = document.getElementById('grid');
+  var movesEl = document.getElementById('moves');
+  var timeEl = document.getElementById('timeElapsed');
+  var bestMovesEl = document.getElementById('bestMoves');
+  var overlay = document.getElementById('overlay');
+  var overlayTitle = document.getElementById('overlayTitle');
+  var overlayMsg = document.getElementById('overlayMsg');
+  var actionBtn = document.getElementById('actionBtn');
+
+  var state = { playing: false, moves: 0, seconds: 0, matchedCount: 0, bestMoves: null, locked: false };
+  var cards = [];
+  var flippedCards = [];
+  var tickTimer = null;
+
+  function loadBest() {
+    try {
+      var v = parseInt(localStorage.getItem(BEST_KEY), 10);
+      return isNaN(v) ? null : v;
+    } catch (e) { return null; }
+  }
+  function saveBest(v) {
+    try { localStorage.setItem(BEST_KEY, String(v)); } catch (e) {}
+  }
+
+  function shuffle(arr) {
+    for (var i = arr.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+    }
+    return arr;
+  }
+
+  function buildGrid() {
+    grid.innerHTML = '';
+    cards = [];
+    var deck = shuffle(PAIR_COLORS.concat(PAIR_COLORS).map(function (color, idx) {
+      return { color: color, idx: idx };
+    }));
+
+    deck.forEach(function (entry, position) {
+      var card = document.createElement('div');
+      card.className = 'card';
+      card.dataset.color = entry.color;
+      card.innerHTML =
+        '<div class="card-inner">' +
+          '<div class="card-face card-face-back"></div>' +
+          '<div class="card-face card-face-front">' + moleSvgMarkup('mem' + position, entry.color) + '</div>' +
+        '</div>';
+      card.addEventListener('click', function () { flipCard(card); });
+      grid.appendChild(card);
+      cards.push(card);
+    });
+  }
+
+  function updateHud() {
+    movesEl.textContent = state.moves;
+    timeEl.textContent = state.seconds;
+    bestMovesEl.textContent = (state.bestMoves === null) ? '--' : state.bestMoves;
+  }
+
+  function flipCard(card) {
+    if (!state.playing || state.locked) return;
+    if (card.classList.contains('flipped') || card.classList.contains('matched')) return;
+
+    card.classList.add('flipped');
+    flippedCards.push(card);
+
+    if (flippedCards.length === 2) {
+      state.moves += 1;
+      movesEl.textContent = state.moves;
+      checkMatch();
+    }
+  }
+
+  function checkMatch() {
+    state.locked = true;
+    var a = flippedCards[0];
+    var b = flippedCards[1];
+    var isMatch = a.dataset.color === b.dataset.color;
+
+    setTimeout(function () {
+      if (isMatch) {
+        a.classList.add('matched');
+        b.classList.add('matched');
+        state.matchedCount += 1;
+        if (state.matchedCount === cards.length / 2) endGame();
+      } else {
+        a.classList.remove('flipped');
+        b.classList.remove('flipped');
+      }
+      flippedCards = [];
+      state.locked = false;
+    }, isMatch ? 260 : 700);
+  }
+
+  function startGame() {
+    state.playing = true;
+    state.moves = 0;
+    state.seconds = 0;
+    state.matchedCount = 0;
+    state.locked = false;
+    flippedCards = [];
+    updateHud();
+    overlay.hidden = true;
+    buildGrid();
+    tickTimer = setInterval(function () {
+      state.seconds += 1;
+      timeEl.textContent = state.seconds;
+    }, 1000);
+  }
+
+  function endGame() {
+    state.playing = false;
+    clearInterval(tickTimer);
+
+    var isRecord = state.bestMoves === null || state.moves < state.bestMoves;
+    if (isRecord) {
+      state.bestMoves = state.moves;
+      saveBest(state.bestMoves);
+      bestMovesEl.textContent = state.bestMoves;
+    }
+
+    overlayTitle.textContent = 'クリア!';
+    overlayMsg.innerHTML = '手数: <span class="result-score">' + state.moves + '</span>' +
+      '<br>時間: ' + state.seconds + '秒' +
+      (isRecord ? '<br><span class="new-record">🎉 ベスト手数更新!</span>' : '');
+    actionBtn.textContent = 'もう一度あそぶ';
+    overlay.hidden = false;
+  }
+
+  actionBtn.addEventListener('click', startGame);
+
+  function boot(data) {
+    state.bestMoves = (data && typeof data.bestMoves === 'number') ? data.bestMoves : loadBest();
+    updateHud();
+    buildGrid();
+  }
+
+  try {
+    if (window.claude && window.claude.hot && window.claude.hot.snapshot) {
+      window.claude.hot.snapshot(function () { return { bestMoves: state.bestMoves }; });
+    }
+    if (window.claude && window.claude.hot && window.claude.hot.ready) {
+      window.claude.hot.ready(boot);
+    } else {
+      boot(window.claude && window.claude.hot ? window.claude.hot.data : null);
+    }
+  } catch (e) {
+    boot(null);
+  }
+})();
+</script>
+</body>
+</html>

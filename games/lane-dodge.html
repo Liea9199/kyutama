@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>玖球のレーン避け</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Nunito:wght@400;600;700;800&display=swap">
+<link rel="stylesheet" href="../style.css">
+<style>
+  .lane-wrap { position: relative; width: 100%; max-width: 420px; }
+
+  .lane-track {
+    position: relative; z-index: 1;
+    width: 100%; height: 420px;
+    overflow: hidden;
+    border-radius: 18px;
+    background: linear-gradient(to bottom, var(--sky-mid) 0%, var(--grass) 40%, var(--grass-deep) 100%);
+  }
+
+  .lane-divider {
+    position: absolute; top: 0; bottom: 0; width: 0;
+    border-left: 2px dashed rgba(255, 255, 255, .28);
+  }
+
+  .lane-player {
+    position: absolute;
+    filter: drop-shadow(0 4px 3px var(--shadow));
+    transition: left .18s cubic-bezier(.34, 1.56, .64, 1), top .18s cubic-bezier(.34, 1.56, .64, 1);
+  }
+  .lane-player .mole-svg { width: 100%; height: auto; display: block; }
+
+  .lane-obstacle {
+    position: absolute;
+    border-radius: 45% 45% 20% 20%;
+    background: radial-gradient(ellipse at 35% 28%, var(--dirt-rim) 0%, var(--dirt) 55%, var(--dirt-deep) 100%);
+    box-shadow: 0 3px 4px var(--shadow);
+  }
+
+  .lane-controls {
+    position: relative; z-index: 1;
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    width: 100%; max-width: 420px;
+  }
+  .lane-controls-row {
+    display: flex; gap: 14px; justify-content: center; width: 100%;
+  }
+  .lane-controls .btn {
+    flex: 1; max-width: 120px;
+    font-size: 1.3rem;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .lane-player { transition-duration: .01ms !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="scene">
+  <div class="sky-deco" aria-hidden="true">
+    <div class="orb"></div>
+    <div class="stars"></div>
+  </div>
+
+  <a class="back-link" href="../index.html">← ミニゲーム一覧</a>
+
+  <header class="hud">
+    <h1>玖球のレーン避け</h1>
+    <p class="tagline">上下左右に動いて迫ってくる障害物を避けよう!</p>
+    <div class="stats">
+      <div class="stat"><span class="stat-label">スコア</span><span class="stat-value" id="score">0</span></div>
+      <div class="stat"><span class="stat-label">ハイスコア</span><span class="stat-value" id="highScore">0</span></div>
+    </div>
+  </header>
+
+  <div class="lane-wrap">
+    <div class="lane-track" id="track">
+      <div class="lane-player" id="player"></div>
+    </div>
+    <div class="overlay" id="overlay">
+      <div class="overlay-card">
+        <h2 id="overlayTitle">準備はいい?</h2>
+        <p id="overlayMsg">下から迫ってくる障害物を、上下左右に動いて避けよう!</p>
+        <button class="btn" id="actionBtn">スタート</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="lane-controls">
+    <div class="lane-controls-row">
+      <button class="btn" id="upBtn" type="button" aria-label="上に移動">↑</button>
+    </div>
+    <div class="lane-controls-row">
+      <button class="btn" id="leftBtn" type="button" aria-label="左に移動">←</button>
+      <button class="btn" id="downBtn" type="button" aria-label="下に移動">↓</button>
+      <button class="btn" id="rightBtn" type="button" aria-label="右に移動">→</button>
+    </div>
+  </div>
+
+  <p class="hint">矢印キーまたは上のボタンで玖球を上下左右に動かして、ぶつからないように避けよう。</p>
+</div>
+
+<script src="mole-icon.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var HIGH_KEY = 'kyutama-lane-dodge-highscore';
+  var LANE_COUNT = 4;
+  var ROW_COUNT = 6;
+  var PLAYER_SIZE_RATIO = 0.6;
+  var RAMP_DURATION = 40;
+
+  var track = document.getElementById('track');
+  var player = document.getElementById('player');
+  var scoreEl = document.getElementById('score');
+  var highScoreEl = document.getElementById('highScore');
+  var overlay = document.getElementById('overlay');
+  var overlayTitle = document.getElementById('overlayTitle');
+  var overlayMsg = document.getElementById('overlayMsg');
+  var actionBtn = document.getElementById('actionBtn');
+  var leftBtn = document.getElementById('leftBtn');
+  var rightBtn = document.getElementById('rightBtn');
+  var upBtn = document.getElementById('upBtn');
+  var downBtn = document.getElementById('downBtn');
+
+  var state = { playing: false, score: 0, highScore: 0, elapsed: 0, lane: 1, row: Math.floor(ROW_COUNT / 2) };
+  var obstacles = [];
+  var rafId = null;
+  var lastTs = 0;
+  var spawnTimer = 0;
+  var nextSpawn = 700;
+  var trackWidth = 0, trackHeight = 0, laneWidth = 0, rowHeight = 0, playerSize = 0;
+
+  player.innerHTML = moleSvgMarkup('lanePlayer');
+
+  for (var d = 1; d < LANE_COUNT; d++) {
+    var divider = document.createElement('div');
+    divider.className = 'lane-divider';
+    track.appendChild(divider);
+  }
+  function lerp(a, b, t) { return a + (b - a) * Math.max(0, Math.min(1, t)); }
+  function laneCenterX(lane) { return laneWidth * (lane + 0.5); }
+  function rowCenterY(row) { return rowHeight * (row + 0.5); }
+
+  function loadHigh() {
+    try {
+      var v = parseInt(localStorage.getItem(HIGH_KEY), 10);
+      return isNaN(v) ? 0 : v;
+    } catch (e) { return 0; }
+  }
+  function saveHigh(v) {
+    try { localStorage.setItem(HIGH_KEY, String(v)); } catch (e) {}
+  }
+
+  function measure() {
+    trackWidth = track.clientWidth;
+    trackHeight = track.clientHeight;
+    laneWidth = trackWidth / LANE_COUNT;
+    rowHeight = trackHeight / ROW_COUNT;
+    playerSize = Math.min(laneWidth, rowHeight) * PLAYER_SIZE_RATIO;
+
+    var laneDividers = track.querySelectorAll('.lane-divider');
+    for (var i = 0; i < laneDividers.length; i++) {
+      laneDividers[i].style.left = (laneWidth * (i + 1)) + 'px';
+    }
+
+    player.style.width = playerSize + 'px';
+    positionPlayer();
+  }
+  window.addEventListener('resize', measure);
+
+  function positionPlayer() {
+    player.style.left = (laneCenterX(state.lane) - playerSize / 2) + 'px';
+    player.style.top = (rowCenterY(state.row) - playerSize / 2) + 'px';
+  }
+
+  function moveLane(delta) {
+    if (!state.playing) return;
+    state.lane = Math.max(0, Math.min(LANE_COUNT - 1, state.lane + delta));
+    positionPlayer();
+  }
+
+  function moveRow(delta) {
+    if (!state.playing) return;
+    state.row = Math.max(0, Math.min(ROW_COUNT - 1, state.row + delta));
+    positionPlayer();
+  }
+
+  function progress() { return Math.min(state.elapsed / RAMP_DURATION, 1); }
+  function currentSpeed() { return lerp(90, 220, progress()); }
+  function currentSpawnGap() { return lerp(950, 480, progress()); }
+
+  function spawnObstacle() {
+    var size = laneWidth * (0.42 + Math.random() * 0.1);
+    var lane = Math.floor(Math.random() * LANE_COUNT);
+    var el = document.createElement('div');
+    el.className = 'lane-obstacle';
+    el.style.width = size + 'px';
+    el.style.height = size + 'px';
+    track.appendChild(el);
+    obstacles.push({ lane: lane, y: trackHeight + size, size: size, el: el });
+  }
+
+  function clearObstacles() {
+    obstacles.forEach(function (o) { o.el.remove(); });
+    obstacles = [];
+  }
+
+  function updateHud() {
+    scoreEl.textContent = Math.floor(state.score);
+    highScoreEl.textContent = state.highScore;
+  }
+
+  function startGame() {
+    measure();
+    clearObstacles();
+    state.score = 0;
+    state.elapsed = 0;
+    state.lane = 1;
+    state.row = Math.floor(ROW_COUNT / 2);
+    spawnTimer = 0;
+    nextSpawn = 700;
+    state.playing = true;
+    positionPlayer();
+    updateHud();
+    overlay.hidden = true;
+    lastTs = performance.now();
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function endGame() {
+    state.playing = false;
+    cancelAnimationFrame(rafId);
+
+    var finalScore = Math.floor(state.score);
+    var isRecord = finalScore > state.highScore;
+    if (isRecord) {
+      state.highScore = finalScore;
+      saveHigh(state.highScore);
+    }
+    updateHud();
+
+    overlayTitle.textContent = 'ゲームオーバー!';
+    overlayMsg.innerHTML = 'スコア: <span class="result-score">' + finalScore + '</span>' +
+      (isRecord ? '<br><span class="new-record">🎉 ハイスコア更新!</span>' : '');
+    actionBtn.textContent = 'もう一度あそぶ';
+    overlay.hidden = false;
+  }
+
+  function tick(ts) {
+    var dt = Math.min((ts - lastTs) / 1000, 0.05);
+    lastTs = ts;
+    state.elapsed += dt;
+
+    spawnTimer += dt * 1000;
+    if (spawnTimer >= nextSpawn) {
+      spawnTimer = 0;
+      nextSpawn = currentSpawnGap() + Math.random() * 250;
+      spawnObstacle();
+    }
+
+    var speed = currentSpeed() * (trackHeight / 420);
+    var collisionTolerance = playerSize * 0.95;
+    var playerRowY = rowCenterY(state.row);
+
+    state.score += speed * dt * 0.12;
+    scoreEl.textContent = Math.floor(state.score);
+
+    for (var i = obstacles.length - 1; i >= 0; i--) {
+      var o = obstacles[i];
+      o.y -= speed * dt;
+
+      if (o.lane === state.lane && Math.abs(o.y - playerRowY) < collisionTolerance + o.size * 0.6) {
+        endGame();
+        return;
+      }
+
+      if (o.y + o.size < 0) {
+        o.el.remove();
+        obstacles.splice(i, 1);
+        continue;
+      }
+
+      o.el.style.left = (laneCenterX(o.lane) - o.size / 2) + 'px';
+      o.el.style.top = o.y + 'px';
+    }
+
+    rafId = requestAnimationFrame(tick);
+  }
+
+  actionBtn.addEventListener('click', startGame);
+  leftBtn.addEventListener('click', function () { moveLane(-1); });
+  rightBtn.addEventListener('click', function () { moveLane(1); });
+  upBtn.addEventListener('click', function () { moveRow(-1); });
+  downBtn.addEventListener('click', function () { moveRow(1); });
+  window.addEventListener('keydown', function (e) {
+    if (e.code === 'ArrowLeft') { e.preventDefault(); moveLane(-1); }
+    else if (e.code === 'ArrowRight') { e.preventDefault(); moveLane(1); }
+    else if (e.code === 'ArrowUp') { e.preventDefault(); moveRow(-1); }
+    else if (e.code === 'ArrowDown') { e.preventDefault(); moveRow(1); }
+  });
+
+  function boot(data) {
+    state.highScore = (data && typeof data.highScore === 'number') ? data.highScore : loadHigh();
+    updateHud();
+    measure();
+  }
+
+  try {
+    if (window.claude && window.claude.hot && window.claude.hot.snapshot) {
+      window.claude.hot.snapshot(function () { return { highScore: state.highScore }; });
+    }
+    if (window.claude && window.claude.hot && window.claude.hot.ready) {
+      window.claude.hot.ready(boot);
+    } else {
+      boot(window.claude && window.claude.hot ? window.claude.hot.data : null);
+    }
+  } catch (e) {
+    boot(null);
+  }
+})();
+</script>
+</body>
+</html>

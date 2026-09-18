@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>玖球のジャンプ</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Nunito:wght@400;600;700;800&display=swap">
+<link rel="stylesheet" href="../style.css">
+<style>
+  .runner-wrap { position: relative; width: 100%; max-width: 420px; }
+
+  .runner-track {
+    position: relative; z-index: 1;
+    width: 100%; height: 220px;
+    overflow: hidden;
+    border-radius: 18px;
+    background: linear-gradient(to bottom, transparent 0%, var(--grass) 55%, var(--grass-deep) 100%);
+  }
+
+  .runner-ground {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    height: 18%;
+    background: linear-gradient(to bottom, var(--dirt-rim) 0%, var(--dirt) 45%, var(--dirt-deep) 100%);
+    box-shadow: inset 0 4px 8px rgba(0, 0, 0, .25);
+  }
+
+  .runner-player {
+    position: absolute; bottom: 0; left: 0;
+    filter: drop-shadow(0 4px 3px var(--shadow));
+    transition: transform .1s ease-out;
+  }
+  .runner-player .mole-svg { width: 100%; height: auto; display: block; }
+  .runner-player.squash { transform: scaleY(.8) translateY(4%); }
+
+  .runner-obstacle {
+    position: absolute; bottom: 0;
+    border-radius: 45% 45% 20% 20%;
+    background: radial-gradient(ellipse at 35% 28%, var(--dirt-rim) 0%, var(--dirt) 55%, var(--dirt-deep) 100%);
+    box-shadow: 0 3px 4px var(--shadow);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .runner-player { transition-duration: .01ms !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="scene">
+  <div class="sky-deco" aria-hidden="true">
+    <div class="orb"></div>
+    <div class="stars"></div>
+  </div>
+
+  <a class="back-link" href="../index.html">← ミニゲーム一覧</a>
+
+  <header class="hud">
+    <h1>玖球のジャンプ</h1>
+    <p class="tagline">タップでジャンプして石を飛び越えよう!</p>
+    <div class="stats">
+      <div class="stat"><span class="stat-label">スコア</span><span class="stat-value" id="score">0</span></div>
+      <div class="stat"><span class="stat-label">ハイスコア</span><span class="stat-value" id="highScore">0</span></div>
+    </div>
+  </header>
+
+  <div class="runner-wrap">
+    <div class="runner-track" id="track">
+      <div class="runner-ground"></div>
+      <div class="runner-player" id="player"></div>
+    </div>
+    <div class="overlay" id="overlay">
+      <div class="overlay-card">
+        <h2 id="overlayTitle">準備はいい?</h2>
+        <p id="overlayMsg">タップ・クリック・スペースキーでジャンプして石を飛び越えよう!</p>
+        <button class="btn" id="actionBtn">スタート</button>
+      </div>
+    </div>
+  </div>
+
+  <p class="hint">タップ(またはスペースキー)でジャンプ!石にぶつかったら終了。</p>
+</div>
+
+<script src="mole-icon.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var HIGH_KEY = 'kyutama-jump-highscore';
+  var GRAVITY = 2600;
+  var JUMP_VELOCITY = 980;
+  var GROUND_RATIO = 0.18;
+  var PLAYER_X_RATIO = 0.15;
+  var PLAYER_SIZE_RATIO = 0.16;
+  var RAMP_DURATION = 40;
+
+  var track = document.getElementById('track');
+  var player = document.getElementById('player');
+  var scoreEl = document.getElementById('score');
+  var highScoreEl = document.getElementById('highScore');
+  var overlay = document.getElementById('overlay');
+  var overlayTitle = document.getElementById('overlayTitle');
+  var overlayMsg = document.getElementById('overlayMsg');
+  var actionBtn = document.getElementById('actionBtn');
+
+  var state = { playing: false, score: 0, highScore: 0, elapsed: 0 };
+  var physics = { y: 0, vy: 0 };
+  var obstacles = [];
+  var rafId = null;
+  var lastTs = 0;
+  var spawnTimer = 0;
+  var nextSpawn = 500;
+  var trackWidth = 0, trackHeight = 0, groundHeight = 0, playerSize = 0, playerX = 0;
+
+  player.innerHTML = moleSvgMarkup('jumpPlayer');
+
+  function lerp(a, b, t) { return a + (b - a) * Math.max(0, Math.min(1, t)); }
+
+  function loadHigh() {
+    try {
+      var v = parseInt(localStorage.getItem(HIGH_KEY), 10);
+      return isNaN(v) ? 0 : v;
+    } catch (e) { return 0; }
+  }
+  function saveHigh(v) {
+    try { localStorage.setItem(HIGH_KEY, String(v)); } catch (e) {}
+  }
+
+  function measure() {
+    trackWidth = track.clientWidth;
+    trackHeight = track.clientHeight;
+    groundHeight = trackHeight * GROUND_RATIO;
+    playerSize = trackWidth * PLAYER_SIZE_RATIO;
+    playerX = trackWidth * PLAYER_X_RATIO;
+    player.style.width = playerSize + 'px';
+    player.style.left = playerX + 'px';
+  }
+  window.addEventListener('resize', measure);
+
+  function progress() { return Math.min(state.elapsed / RAMP_DURATION, 1); }
+  function currentSpeed() { return lerp(230, 480, progress()); }
+  function currentSpawnGap() { return lerp(1300, 700, progress()); }
+
+  function jump() {
+    if (!state.playing) return;
+    if (physics.y <= 0.5) {
+      physics.vy = JUMP_VELOCITY;
+    }
+  }
+
+  function spawnObstacle() {
+    var height = trackWidth * (0.09 + Math.random() * 0.035);
+    var width = height * 0.85;
+    var el = document.createElement('div');
+    el.className = 'runner-obstacle';
+    el.style.width = width + 'px';
+    el.style.height = height + 'px';
+    track.appendChild(el);
+    obstacles.push({ x: trackWidth, width: width, height: height, el: el });
+  }
+
+  function clearObstacles() {
+    obstacles.forEach(function (o) { o.el.remove(); });
+    obstacles = [];
+  }
+
+  function updateHud() {
+    scoreEl.textContent = Math.floor(state.score);
+    highScoreEl.textContent = state.highScore;
+  }
+
+  function startGame() {
+    measure();
+    physics.y = 0; physics.vy = 0;
+    clearObstacles();
+    state.score = 0;
+    state.elapsed = 0;
+    spawnTimer = 0;
+    nextSpawn = 500;
+    state.playing = true;
+    updateHud();
+    overlay.hidden = true;
+    lastTs = performance.now();
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function endGame() {
+    state.playing = false;
+    cancelAnimationFrame(rafId);
+
+    var finalScore = Math.floor(state.score);
+    var isRecord = finalScore > state.highScore;
+    if (isRecord) {
+      state.highScore = finalScore;
+      saveHigh(state.highScore);
+    }
+    updateHud();
+
+    overlayTitle.textContent = 'ゲームオーバー!';
+    overlayMsg.innerHTML = 'スコア: <span class="result-score">' + finalScore + '</span>' +
+      (isRecord ? '<br><span class="new-record">🎉 ハイスコア更新!</span>' : '');
+    actionBtn.textContent = 'もう一度あそぶ';
+    overlay.hidden = false;
+  }
+
+  function tick(ts) {
+    var dt = Math.min((ts - lastTs) / 1000, 0.05);
+    lastTs = ts;
+    state.elapsed += dt;
+
+    var wasAirborne = physics.y > 0.5;
+    physics.vy -= GRAVITY * dt;
+    physics.y += physics.vy * dt;
+    if (physics.y < 0) {
+      physics.y = 0;
+      physics.vy = 0;
+      if (wasAirborne) {
+        player.classList.add('squash');
+        setTimeout(function () { player.classList.remove('squash'); }, 110);
+      }
+    }
+
+    state.score += currentSpeed() * dt * 0.12;
+    scoreEl.textContent = Math.floor(state.score);
+
+    spawnTimer += dt * 1000;
+    if (spawnTimer >= nextSpawn) {
+      spawnTimer = 0;
+      nextSpawn = currentSpawnGap() + Math.random() * 300;
+      spawnObstacle();
+    }
+
+    var speed = currentSpeed();
+    for (var i = obstacles.length - 1; i >= 0; i--) {
+      var o = obstacles[i];
+      o.x -= speed * dt;
+      if (o.x + o.width < 0) {
+        o.el.remove();
+        obstacles.splice(i, 1);
+        continue;
+      }
+      if (o.x < playerX + playerSize && o.x + o.width > playerX) {
+        if (physics.y < o.height * 0.85) {
+          endGame();
+          return;
+        }
+      }
+      o.el.style.left = o.x + 'px';
+      o.el.style.bottom = groundHeight + 'px';
+    }
+
+    player.style.bottom = (groundHeight + physics.y) + 'px';
+
+    rafId = requestAnimationFrame(tick);
+  }
+
+  actionBtn.addEventListener('click', startGame);
+  track.addEventListener('pointerdown', jump);
+  window.addEventListener('keydown', function (e) {
+    if (e.code === 'Space' || e.code === 'ArrowUp') {
+      e.preventDefault();
+      jump();
+    }
+  });
+
+  function boot(data) {
+    state.highScore = (data && typeof data.highScore === 'number') ? data.highScore : loadHigh();
+    updateHud();
+    measure();
+  }
+
+  try {
+    if (window.claude && window.claude.hot && window.claude.hot.snapshot) {
+      window.claude.hot.snapshot(function () { return { highScore: state.highScore }; });
+    }
+    if (window.claude && window.claude.hot && window.claude.hot.ready) {
+      window.claude.hot.ready(boot);
+    } else {
+      boot(window.claude && window.claude.hot ? window.claude.hot.data : null);
+    }
+  } catch (e) {
+    boot(null);
+  }
+})();
+</script>
+</body>
+</html>
