@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>玖球のゴールドマイナー</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Nunito:wght@400;600;700;800&display=swap">
+<link rel="stylesheet" href="../style.css">
+<style>
+  .miner-wrap { position: relative; width: 100%; max-width: 420px; }
+
+  .miner-canvas {
+    position: relative; z-index: 1;
+    display: block;
+    width: 100%; height: auto;
+    aspect-ratio: 400 / 520;
+    border-radius: 18px;
+    box-shadow: 0 8px 18px var(--shadow);
+    touch-action: manipulation;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+
+<div class="scene">
+  <div class="sky-deco" aria-hidden="true">
+    <div class="orb"></div>
+    <div class="stars"></div>
+  </div>
+
+  <a class="back-link" href="../index.html">← ミニゲーム一覧</a>
+
+  <header class="hud">
+    <h1>玖球のゴールドマイナー</h1>
+    <p class="tagline">フックを伸ばして金の玖球を釣り上げよう!</p>
+    <div class="stats">
+      <div class="stat"><span class="stat-label">お金</span><span class="stat-value" id="money">0</span></div>
+      <div class="stat"><span class="stat-label">目標</span><span class="stat-value" id="target">0</span></div>
+      <div class="stat"><span class="stat-label">残り秒</span><span class="stat-value" id="timeLeft">60</span></div>
+      <div class="stat"><span class="stat-label">ステージ</span><span class="stat-value" id="level">1</span></div>
+    </div>
+  </header>
+
+  <div class="miner-wrap">
+    <canvas class="miner-canvas" id="canvas" aria-label="ゴールドマイナーのゲーム画面"></canvas>
+    <div class="overlay" id="overlay">
+      <div class="overlay-card">
+        <h2 id="overlayTitle">準備はいい?</h2>
+        <p id="overlayMsg">時間内に目標金額を集めよう!<br>紫の玖球=金、灰色=石、赤=TNT</p>
+        <button class="btn" id="actionBtn">スタート</button>
+      </div>
+    </div>
+  </div>
+
+  <p class="hint">タップ(またはスペース・↓キー)でフックを発射!重いものほど引き上げに時間がかかるよ。</p>
+</div>
+
+<script src="mole-icon.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var HIGH_KEY = 'kyutama-goldminer-highscore';
+  // 画面はこの論理サイズで描き、表示サイズに合わせて拡大縮小する
+  var W = 400, H = 520;
+  var GROUND_Y = 104;
+  var PIVOT = { x: W / 2, y: 92 };
+  var ROPE_MIN = 22;
+  var MAX_ANGLE = 1.25;
+  var SWING_SPEED = 1.9;
+  var EXTEND_SPEED = 340;
+  var EMPTY_RETRACT_SPEED = 460;
+  var LEVEL_TIME = 60;
+  var TNT_RADIUS = 85;
+  var MOLE_ASPECT = 592 / 624;
+
+  // speed は引き上げの速さ(px/秒)。重いものほど遅い
+  var KINDS = {
+    goldL:  { look: 'gold',  r: 40, value: 500, speed: 75 },
+    stoneL: { look: 'stone', r: 32, value: 20,  speed: 65 },
+    goldM:  { look: 'gold',  r: 26, value: 150, speed: 180 },
+    tnt:    { look: 'tnt',   r: 20, value: 0,   speed: 0 },
+    stoneS: { look: 'stone', r: 20, value: 11,  speed: 140 },
+    bag:    { look: 'bag',   r: 17, value: 0,   speed: 300 },
+    goldS:  { look: 'gold',  r: 16, value: 50,  speed: 300 }
+  };
+  var BAG_VALUES = [30, 60, 100, 150, 250, 400, 600];
+
+  var canvas = document.getElementById('canvas');
+  var ctx = canvas.getContext('2d');
+  var moneyEl = document.getElementById('money');
+  var targetEl = document.getElementById('target');
+  var timeEl = document.getElementById('timeLeft');
+  var levelEl = document.getElementById('level');
+  var overlay = document.getElementById('overlay');
+  var overlayTitle = document.getElementById('overlayTitle');
+  var overlayMsg = document.getElementById('overlayMsg');
+  var actionBtn = document.getElementById('actionBtn');
+
+  var state = { playing: false, level: 1, money: 0, target: 0, timeLeft: LEVEL_TIME, highScore: 0 };
+  var hook = { state: 'swing', angle: 0, len: ROPE_MIN, swingT: 0, item: null };
+  var items = [];
+  var popups = [];
+  var blasts = [];
+  var nextAction = startGame;
+  var rafId = null;
+  var lastTs = 0;
+  var audioCtx = null;
+  var colors = {};
+
+  // 紫=金、赤=TNT、緑=操作役の玖球。灰色(石)は紫の画像から作る
+  var images = {
+    gold: loadImage('mole.png'),
+    tnt: loadImage('mole-red.png'),
+    miner: loadImage('mole-green.png'),
+    stone: null
+  };
+  images.gold.addEventListener('load', function () {
+    images.stone = makeGray(images.gold);
+    render();
+  });
+
+  function loadImage(file) {
+    var img = new Image();
+    img.src = new URL(file, MOLE_PNG_BASE).href;
+    img.addEventListener('load', function () { render(); });
+    return img;
+  }
+
+  // getImageData を使わずに合成モードで灰色化する(file:// で開いても動くように)
+  function makeGray(img) {
+    var c = document.createElement('canvas');
+    c.width = img.naturalWidth;
+    c.height = img.naturalHeight;
+    var g = c.getContext('2d');
+    g.drawImage(img, 0, 0);
+    g.globalCompositeOperation = 'saturation';
+    g.fillStyle = '#808080';
+    g.fillRect(0, 0, c.width, c.height);
+    g.globalCompositeOperation = 'destination-in';
+    g.drawImage(img, 0, 0);
+    return c;
+  }
+
+  function loadHigh() {
+    try {
+      var v = parseInt(localStorage.getItem(HIGH_KEY), 10);
+      return isNaN(v) ? 0 : v;
+    } catch (e) { return 0; }
+  }
+  function saveHigh(v) {
+    try { localStorage.setItem(HIGH_KEY, String(v)); } catch (e) {}
+  }
+
+  function readColors() {
+    var cs = getComputedStyle(document.documentElement);
+    ['sky-top', 'sky-mid', 'grass', 'dirt', 'dirt-deep', 'dirt-rim', 'ink', 'accent'].forEach(function (name) {
+      colors[name] = cs.getPropertyValue('--' + name).trim();
+    });
+  }
+
+  function setupCanvas() {
+    var dpr = Math.min(window.devicePixelRatio || 1, 3);
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function ensureAudio() {
+    if (!audioCtx) {
+      try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+    } else if (audioCtx.state === 'suspended') {
+      try { audioCtx.resume(); } catch (e) {}
+    }
+  }
+
+  function playTone(type, from, to, dur, vol) {
+    if (!audioCtx) return;
+    try {
+      var t = audioCtx.currentTime;
+      var osc = audioCtx.createOscillator();
+      var gain = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(from, t);
+      osc.frequency.exponentialRampToValueAtTime(to, t + dur);
+      gain.gain.setValueAtTime(vol, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + dur + 0.02);
+    } catch (e) {}
+  }
+
+  function targetFor(level) {
+    var t = 0;
+    for (var i = 1; i <= level; i++) t += 500 + i * 150;
+    return t;
+  }
+
+  // 大きいものから順に、重ならないように配置する
+  function levelPlan(level) {
+    return [
+      ['goldL', 1 + Math.floor(level / 2)],
+      ['stoneL', 2 + Math.floor(level / 3)],
+      ['goldM', 2 + (level > 2 ? 1 : 0)],
+      ['tnt', level > 1 ? 2 : 1],
+      ['stoneS', 3],
+      ['bag', 2],
+      ['goldS', 4]
+    ];
+  }
+
+  function buildItems(level) {
+    items = [];
+    levelPlan(level).forEach(function (entry) {
+      var kind = KINDS[entry[0]];
+      for (var n = 0; n < entry[1]; n++) {
+        var minY = entry[0] === 'goldL' ? 300 : GROUND_Y + 70;
+        for (var tries = 0; tries < 80; tries++) {
+          var x = kind.r + 8 + Math.random() * (W - kind.r * 2 - 16);
+          var y = minY + kind.r + Math.random() * (H - minY - kind.r * 2 - 8);
+          var overlaps = items.some(function (o) {
+            return Math.hypot(o.x - x, o.y - y) < o.r + kind.r + 6;
+          });
+          if (!overlaps) {
+            items.push({ kind: entry[0], look: kind.look, x: x, y: y, r: kind.r, value: kind.value, speed: kind.speed });
+            break;
+          }
+        }
+      }
+    });
+  }
+
+  function hookTip() {
+    return {
+      x: PIVOT.x + Math.sin(hook.angle) * hook.len,
+      y: PIVOT.y + Math.cos(hook.angle) * hook.len
+    };
+  }
+
+  function fire() {
+    if (!state.playing || hook.state !== 'swing') return;
+    hook.state = 'extend';
+  }
+
+  function explode(tnt) {
+    var idx = items.indexOf(tnt);
+    if (idx < 0) return;
+    items.splice(idx, 1);
+    blasts.push({ x: tnt.x, y: tnt.y, t: 0 });
+    playTone('sawtooth', 160, 40, 0.35, 0.2);
+    // 爆風に巻き込まれたものは消える。TNTは連鎖する
+    items.slice().forEach(function (o) {
+      if (Math.hypot(o.x - tnt.x, o.y - tnt.y) > TNT_RADIUS) return;
+      if (o.kind === 'tnt') explode(o);
+      else items.splice(items.indexOf(o), 1);
+    });
+  }
+
+  function collect(item) {
+    var value = item.kind === 'bag'
+      ? BAG_VALUES[Math.floor(Math.random() * BAG_VALUES.length)]
+      : item.value;
+    state.money += value;
+    moneyEl.textContent = state.money;
+    popups.push({ text: '+$' + value, t: 0 });
+    playTone('sine', value >= 150 ? 880 : 520, value >= 150 ? 1320 : 700, 0.18, 0.15);
+  }
+
+  function updateHook(dt) {
+    if (hook.state === 'swing') {
+      hook.swingT += dt;
+      hook.angle = MAX_ANGLE * Math.sin(hook.swingT * SWING_SPEED);
+      return;
+    }
+
+    if (hook.state === 'extend') {
+      hook.len += EXTEND_SPEED * dt;
+      var tip = hookTip();
+      if (tip.x < 0 || tip.x > W || tip.y > H) {
+        hook.state = 'retract';
+        return;
+      }
+      for (var i = 0; i < items.length; i++) {
+        var o = items[i];
+        if (Math.hypot(o.x - tip.x, o.y - tip.y) < o.r + 4) {
+          if (o.kind === 'tnt') {
+            explode(o);
+          } else {
+            items.splice(i, 1);
+            hook.item = o;
+          }
+          hook.state = 'retract';
+          return;
+        }
+      }
+      return;
+    }
+
+    // retract
+    hook.len -= (hook.item ? hook.item.speed : EMPTY_RETRACT_SPEED) * dt;
+    if (hook.len <= ROPE_MIN) {
+      hook.len = ROPE_MIN;
+      if (hook.item) collect(hook.item);
+      hook.item = null;
+      hook.state = 'swing';
+    }
+  }
+
+  function updateHud() {
+    moneyEl.textContent = state.money;
+    targetEl.textContent = state.target;
+    timeEl.textContent = Math.ceil(state.timeLeft);
+    levelEl.textContent = state.level;
+  }
+
+  function resetHook() {
+    hook.state = 'swing';
+    hook.len = ROPE_MIN;
+    hook.item = null;
+    hook.swingT = 0;
+    hook.angle = 0;
+  }
+
+  function startLevel() {
+    ensureAudio();
+    state.target = targetFor(state.level);
+    state.timeLeft = LEVEL_TIME;
+    resetHook();
+    popups = [];
+    blasts = [];
+    buildItems(state.level);
+    updateHud();
+    overlay.hidden = true;
+    state.playing = true;
+    lastTs = performance.now();
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function startGame() {
+    state.level = 1;
+    state.money = 0;
+    startLevel();
+  }
+
+  function nextLevel() {
+    state.level += 1;
+    startLevel();
+  }
+
+  function finishLevel() {
+    state.playing = false;
+    cancelAnimationFrame(rafId);
+    timeEl.textContent = Math.ceil(state.timeLeft);
+    render();
+
+    if (state.money >= state.target) {
+      overlayTitle.textContent = 'ステージ' + state.level + ' クリア!';
+      overlayMsg.innerHTML = 'お金: <span class="result-score">$' + state.money + '</span>' +
+        '<br>次の目標: $' + targetFor(state.level + 1);
+      actionBtn.textContent = '次のステージへ';
+      nextAction = nextLevel;
+    } else {
+      var isRecord = state.money > state.highScore;
+      if (isRecord) {
+        state.highScore = state.money;
+        saveHigh(state.highScore);
+      }
+      overlayTitle.textContent = 'ゲームオーバー!';
+      overlayMsg.innerHTML = 'ステージ' + state.level + ' / お金: <span class="result-score">$' + state.money + '</span>' +
+        (isRecord ? '<br><span class="new-record">🎉 ハイスコア更新!</span>' : '<br>ハイスコア: $' + state.highScore);
+      actionBtn.textContent = 'もう一度あそぶ';
+      nextAction = startGame;
+    }
+    overlay.hidden = false;
+  }
+
+  function tick(ts) {
+    var dt = Math.min((ts - lastTs) / 1000, 0.05);
+    lastTs = ts;
+
+    var shownTime = Math.ceil(state.timeLeft);
+    state.timeLeft = Math.max(0, state.timeLeft - dt);
+    if (Math.ceil(state.timeLeft) !== shownTime) timeEl.textContent = Math.ceil(state.timeLeft);
+
+    updateHook(dt);
+    popups.forEach(function (p) { p.t += dt; });
+    popups = popups.filter(function (p) { return p.t < 0.9; });
+    blasts.forEach(function (b) { b.t += dt; });
+    blasts = blasts.filter(function (b) { return b.t < 0.45; });
+
+    render();
+
+    // 時間切れ、または取れるものがなくなったらステージ終了
+    var nothingLeft = items.length === 0 && hook.state === 'swing';
+    if (state.timeLeft <= 0 || nothingLeft) {
+      finishLevel();
+      return;
+    }
+    rafId = requestAnimationFrame(tick);
+  }
+
+  // ---- 描画 ----
+
+  function drawMole(img, x, y, r) {
+    if (!img || (img.complete === false)) return;
+    var w = r * 2.3;
+    var h = w * MOLE_ASPECT;
+    ctx.drawImage(img, x - w / 2, y - h / 2, w, h);
+  }
+
+  function drawBag(x, y, r) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.fillStyle = '#C9A36A';
+    ctx.strokeStyle = '#7A5A2E';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.45, -r * 0.7);
+    ctx.quadraticCurveTo(-r * 1.25, r * 0.1, -r * 0.9, r * 0.85);
+    ctx.quadraticCurveTo(0, r * 1.2, r * 0.9, r * 0.85);
+    ctx.quadraticCurveTo(r * 1.25, r * 0.1, r * 0.45, -r * 0.7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(0, -r * 0.85, r * 0.55, r * 0.28, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#7A5A2E';
+    ctx.font = '800 ' + Math.round(r * 1.1) + 'px "Baloo 2", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('?', 0, r * 0.25);
+    ctx.restore();
+  }
+
+  function drawItem(o, x, y) {
+    if (o.look === 'bag') drawBag(x, y, o.r);
+    else drawMole(images[o.look], x, y, o.r);
+  }
+
+  function drawHook(x, y) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(-hook.angle);
+    ctx.strokeStyle = colors.ink;
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(0, -4);
+    ctx.quadraticCurveTo(-13, 2, -8, 14);
+    ctx.moveTo(0, -4);
+    ctx.quadraticCurveTo(13, 2, 8, 14);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function render() {
+    if (!colors.ink) return;
+    // 背景:空と地面
+    var sky = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+    sky.addColorStop(0, colors['sky-top']);
+    sky.addColorStop(1, colors['sky-mid']);
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, W, GROUND_Y);
+    var dirt = ctx.createLinearGradient(0, GROUND_Y, 0, H);
+    dirt.addColorStop(0, colors['dirt-rim']);
+    dirt.addColorStop(0.35, colors.dirt);
+    dirt.addColorStop(1, colors['dirt-deep']);
+    ctx.fillStyle = dirt;
+    ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+    ctx.fillStyle = colors.grass;
+    ctx.fillRect(0, GROUND_Y - 4, W, 8);
+
+    items.forEach(function (o) { drawItem(o, o.x, o.y); });
+
+    // 操作役の玖球と巻き上げ機
+    drawMole(images.miner, PIVOT.x, PIVOT.y - 34, 28);
+    ctx.fillStyle = colors.ink;
+    ctx.beginPath();
+    ctx.arc(PIVOT.x, PIVOT.y, 6, 0, Math.PI * 2);
+    ctx.fill();
+
+    // ロープとフック
+    var tip = hookTip();
+    ctx.strokeStyle = colors.ink;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(PIVOT.x, PIVOT.y);
+    ctx.lineTo(tip.x, tip.y);
+    ctx.stroke();
+    if (hook.item) {
+      var off = hook.item.r * 0.8;
+      drawItem(hook.item, tip.x + Math.sin(hook.angle) * off, tip.y + Math.cos(hook.angle) * off);
+    }
+    drawHook(tip.x, tip.y);
+
+    blasts.forEach(function (b) {
+      var p = b.t / 0.45;
+      ctx.fillStyle = 'rgba(255, 140, 50, ' + (0.75 * (1 - p)) + ')';
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, 20 + p * TNT_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    popups.forEach(function (p) {
+      ctx.globalAlpha = 1 - p.t / 0.9;
+      ctx.fillStyle = colors.accent;
+      ctx.font = '800 22px "Baloo 2", sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(p.text, PIVOT.x + 36, PIVOT.y - 40 - p.t * 30);
+      ctx.globalAlpha = 1;
+    });
+  }
+
+  // ---- 入力 ----
+
+  actionBtn.addEventListener('click', function () { nextAction(); });
+  canvas.addEventListener('pointerdown', fire);
+  window.addEventListener('keydown', function (e) {
+    if (e.code === 'Space' || e.code === 'ArrowDown') {
+      if (!state.playing) return;
+      e.preventDefault();
+      fire();
+    }
+  });
+
+  try {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+      readColors();
+      render();
+    });
+  } catch (e) {}
+
+  function boot(data) {
+    state.highScore = (data && typeof data.highScore === 'number') ? data.highScore : loadHigh();
+    state.target = targetFor(state.level);
+    readColors();
+    setupCanvas();
+    buildItems(state.level);
+    updateHud();
+    render();
+  }
+
+  try {
+    if (window.claude && window.claude.hot && window.claude.hot.snapshot) {
+      window.claude.hot.snapshot(function () { return { highScore: state.highScore }; });
+    }
+    if (window.claude && window.claude.hot && window.claude.hot.ready) {
+      window.claude.hot.ready(boot);
+    } else {
+      boot(window.claude && window.claude.hot ? window.claude.hot.data : null);
+    }
+  } catch (e) {
+    boot(null);
+  }
+})();
+</script>
+</body>
+</html>
