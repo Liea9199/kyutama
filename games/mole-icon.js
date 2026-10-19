@@ -37,7 +37,7 @@ function moleSvgMarkup(idSuffix, furColor) {
   '<path d="M52,68 Q42,56 34,60" fill="none" stroke="var(--ink)" stroke-width="2.5" stroke-linecap="round"/>' +
   '<path d="M68,68 Q78,56 86,60" fill="none" stroke="var(--ink)" stroke-width="2.5" stroke-linecap="round"/>' +
   '<circle cx="83" cy="68.5" r="1.3" fill="var(--ink)"/>' +
-  '<path d="M50,81 Q53,89 57,81 Q60,77 63,81 Q67,89 70,81" fill="none" stroke="var(--ink)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>' +
+  '<path d="M50,81.7 Q53,86.9 57,81.7 Q60,79.1 63,81.7 Q67,86.9 70,81.7" fill="none" stroke="var(--ink)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>' +
   '</svg>';
 }
 
