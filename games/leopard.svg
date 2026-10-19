@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="-18 -32 156 148" width="624" height="592">
+  <!-- 豹球:玖球と同じ丸い体に、豹の耳・豹柄・細長いしっぽ・丸い目・ωの口・★のお腹 -->
+  <defs>
+    <!-- ロゼット:円弧3つ+真ん中の小さな楕円 -->
+    <g id="ros3" fill="none" stroke="#8A5534" stroke-width="2.6" stroke-linecap="round">
+      <path d="M-4.7,-1.71 A5,5 0 0 1 0.87,-4.92"/>
+      <path d="M3.83,-3.21 A5,5 0 0 1 3.83,3.21"/>
+      <path d="M0.87,4.92 A5,5 0 0 1 -4.7,1.71"/>
+      <ellipse rx="1.7" ry="1.25" fill="#8A5534" stroke="none"/>
+    </g>
+    <!-- ロゼット:半円2つ+真ん中の小さな楕円 -->
+    <g id="ros2" fill="none" stroke="#8A5534" stroke-width="2.6" stroke-linecap="round">
+      <path d="M-4.83,-1.29 A5,5 0 0 1 4.83,-1.29"/>
+      <path d="M4.83,1.29 A5,5 0 0 1 -4.83,1.29"/>
+      <ellipse rx="1.7" ry="1.25" fill="#8A5534" stroke="none"/>
+    </g>
+    <!-- 柄が体からはみ出さないように切り抜く -->
+    <clipPath id="bodyClip">
+      <ellipse cx="60" cy="66" rx="48" ry="44"/>
+      <ellipse cx="43" cy="105" rx="15" ry="9.5"/>
+      <ellipse cx="77" cy="105" rx="15" ry="9.5"/>
+    </clipPath>
+  </defs>
+
+  <!-- しっぽ:長くて太め、点々の柄と濃い先っぽ -->
+  <path d="M94,92 C120,98 128,72 121,50 C115,31 119,15 127,9" fill="none" stroke="#F6D58F" stroke-width="13" stroke-linecap="round"/>
+  <!-- しっぽの柄:ロゼットのかけら・円弧・点を不規則に散らす -->
+  <use xlink:href="#ros3" transform="translate(112.5,89.5) rotate(25) scale(.75)"/>
+  <ellipse cx="125" cy="73" rx="1.8" ry="2.3" transform="rotate(20 125 73)" fill="#8A5534"/>
+  <path d="M-3.6,1.2 A4.2,4.2 0 0 1 3.6,1.2" transform="translate(119.5,56) rotate(-70)" fill="none" stroke="#8A5534" stroke-width="2.6" stroke-linecap="round"/>
+  <ellipse cx="118.5" cy="35" rx="1.7" ry="2.1" fill="#8A5534"/>
+  <circle cx="127" cy="9" r="6.6" fill="#8A5534"/>
+
+  <!-- 耳 -->
+  <path d="M24,44 L29,12 Q31,6 37,10 L56,28 Z" fill="#F6D58F" stroke="#8A5534" stroke-width="2.4" stroke-linejoin="round"/>
+  <path d="M30,36 L33,19 L46,30 Z" fill="#F3B6A6"/>
+  <path d="M96,44 L91,12 Q89,6 83,10 L64,28 Z" fill="#F6D58F" stroke="#8A5534" stroke-width="2.4" stroke-linejoin="round"/>
+  <path d="M90,36 L87,19 L74,30 Z" fill="#F3B6A6"/>
+
+  <!-- 足・手・体 -->
+  <ellipse cx="43" cy="105" rx="15" ry="9.5" fill="#F6D58F"/>
+  <ellipse cx="77" cy="105" rx="15" ry="9.5" fill="#F6D58F"/>
+  <ellipse cx="10" cy="76" rx="9" ry="6.5" fill="#F6D58F"/>
+  <ellipse cx="110" cy="76" rx="9" ry="6.5" fill="#F6D58F"/>
+  <ellipse cx="60" cy="66" rx="48" ry="44" fill="#F6D58F"/>
+
+  <!-- 豹柄(顔とお腹のまわりは空ける) -->
+  <g clip-path="url(#bodyClip)">
+    <use xlink:href="#ros3" transform="translate(21,60) rotate(40)"/>
+    <use xlink:href="#ros2" transform="translate(100,62) rotate(-30)"/>
+    <use xlink:href="#ros2" transform="translate(29,99) rotate(60) scale(.85)"/>
+    <use xlink:href="#ros3" transform="translate(91,99) rotate(-70) scale(.85)"/>
+    <g fill="#8A5534">
+      <ellipse cx="34" cy="42" rx="1.7" ry="2.2" transform="rotate(-30 34 42)"/>
+      <ellipse cx="86" cy="42" rx="1.7" ry="2.2" transform="rotate(30 86 42)"/>
+      <ellipse cx="19" cy="82" rx="1.5" ry="1.9"/>
+      <ellipse cx="101" cy="82" rx="1.5" ry="1.9"/>
+    </g>
+  </g>
+
+  <!-- 頭の上の柄:縦線・半円・縦線 -->
+  <g fill="none" stroke="#8A5534" stroke-width="2.6" stroke-linecap="round">
+    <path d="M50,27 L51,37"/>
+    <path d="M55,29 A5,5 0 0 0 65,29"/>
+    <path d="M70,27 L69,37"/>
+  </g>
+
+  <!-- お腹:白い円と灰色の★ -->
+  <ellipse cx="60" cy="94" rx="19" ry="14" fill="#FFF6E3"/>
+  <path d="M60,86.5 L62.2,91.2 L67.3,91.6 L63.4,94.9 L64.6,99.9 L60,97.2 L55.4,99.9 L56.6,94.9 L52.7,91.6 L57.8,91.2 Z" fill="#A9A4A0" stroke="#A9A4A0" stroke-width="1" stroke-linejoin="round"/>
+
+  <!-- 顔:丸い目・ほっぺ・ほくろ・ωの口 -->
+  <ellipse cx="33" cy="72" rx="7" ry="4.5" fill="#F3A6C4" opacity=".6"/>
+  <ellipse cx="87" cy="72" rx="7" ry="4.5" fill="#F3A6C4" opacity=".6"/>
+  <ellipse cx="44" cy="60" rx="6.2" ry="6.8" fill="#4A2A18"/>
+  <ellipse cx="76" cy="60" rx="6.2" ry="6.8" fill="#4A2A18"/>
+  <circle cx="42" cy="57.5" r="2.3" fill="#FFFFFF"/>
+  <circle cx="74" cy="57.5" r="2.3" fill="#FFFFFF"/>
+  <circle cx="46.2" cy="63" r="1" fill="#FFFFFF"/>
+  <circle cx="78.2" cy="63" r="1" fill="#FFFFFF"/>
+  <circle cx="86" cy="66" r="1.6" fill="#3A2A1D"/>
+  <ellipse cx="60" cy="68.5" rx="2" ry="1.4" fill="#4A2A18"/>
+  <path d="M53.5,71 Q54.5,76.5 60,72.5 Q65.5,76.5 66.5,71" fill="none" stroke="#4A2A18" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

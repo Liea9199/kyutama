@@ -109,11 +109,11 @@
   var audioCtx = null;
   var colors = {};
 
-  // 紫=金、赤=TNT、緑=操作役の玖球。灰色(石)は紫の画像から作る
+  // 紫=金、赤=TNT、操作役は豹球。灰色(石)は紫の画像から作る
   var images = {
     gold: loadImage('mole.png'),
     tnt: loadImage('mole-red.png'),
-    miner: loadImage('mole-green.png'),
+    miner: loadImage('leopard.png'),
     stone: null
   };
   images.gold.addEventListener('load', function () {
@@ -476,7 +476,7 @@
 
     items.forEach(function (o) { drawItem(o, o.x, o.y); });
 
-    // 操作役の玖球と巻き上げ機
+    // 操作役の豹球と巻き上げ機
     drawMole(images.miner, PIVOT.x, PIVOT.y - 34, 28);
     ctx.fillStyle = colors.ink;
     ctx.beginPath();
