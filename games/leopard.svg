@@ -31,11 +31,16 @@
   <ellipse cx="118.5" cy="35" rx="1.7" ry="2.1" fill="#8A5534"/>
   <circle cx="127" cy="9" r="6.6" fill="#8A5534"/>
 
-  <!-- 耳 -->
-  <path d="M24,44 L29,12 Q31,6 37,10 L56,28 Z" fill="#F6D58F" stroke="#8A5534" stroke-width="2.4" stroke-linejoin="round"/>
-  <path d="M30,36 L33,19 L46,30 Z" fill="#F3B6A6"/>
-  <path d="M96,44 L91,12 Q89,6 83,10 L64,28 Z" fill="#F6D58F" stroke="#8A5534" stroke-width="2.4" stroke-linejoin="round"/>
-  <path d="M90,36 L87,19 L74,30 Z" fill="#F3B6A6"/>
+  <!-- 耳:おにぎりより少し丸い耳 -->
+  <!-- 頭のつけ根を中心に0.8倍(ふちの太さは2.4のまま) -->
+  <g transform="translate(36,38) scale(.8) translate(-36,-38)">
+    <path d="M20,44 C10,34 14,14 27,12 C36,11 48,20 54,30 Z" fill="#F6D58F" stroke="#8A5534" stroke-width="3" stroke-linejoin="round"/>
+    <path d="M25,36 C19,30 21,20 28,19 C33,18 40,24 43,29 Z" fill="#F3B6A6"/>
+  </g>
+  <g transform="translate(84,38) scale(.8) translate(-84,-38)">
+    <path d="M100,44 C110,34 106,14 93,12 C84,11 72,20 66,30 Z" fill="#F6D58F" stroke="#8A5534" stroke-width="3" stroke-linejoin="round"/>
+    <path d="M95,36 C101,30 99,20 92,19 C87,18 80,24 77,29 Z" fill="#F3B6A6"/>
+  </g>
 
   <!-- 足・手・体 -->
   <ellipse cx="43" cy="105" rx="15" ry="9.5" fill="#F6D58F"/>
