@@ -34,10 +34,10 @@ function moleSvgMarkup(idSuffix, furColor) {
   '<ellipse cx="60" cy="66" rx="48" ry="44" fill="' + fur + '"/>' +
   '<ellipse cx="34" cy="76" rx="7" ry="4.5" fill="#F3A6C4" opacity=".55"/>' +
   '<ellipse cx="86" cy="76" rx="7" ry="4.5" fill="#F3A6C4" opacity=".55"/>' +
-  '<path d="M52,66 Q42,54 34,58" fill="none" stroke="var(--ink)" stroke-width="4.5" stroke-linecap="round"/>' +
-  '<path d="M68,66 Q78,54 86,58" fill="none" stroke="var(--ink)" stroke-width="4.5" stroke-linecap="round"/>' +
-  '<circle cx="83" cy="72" r="1.8" fill="var(--ink)"/>' +
-  '<path d="M50,84 Q53,92 57,84 Q60,80 63,84 Q67,92 70,84" fill="none" stroke="var(--ink)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>' +
+  '<path d="M52,66 Q42,54 34,58" fill="none" stroke="var(--ink)" stroke-width="2.5" stroke-linecap="round"/>' +
+  '<path d="M68,66 Q78,54 86,58" fill="none" stroke="var(--ink)" stroke-width="2.5" stroke-linecap="round"/>' +
+  '<circle cx="83" cy="66.5" r="1.3" fill="var(--ink)"/>' +
+  '<path d="M50,84 Q53,92 57,84 Q60,80 63,84 Q67,92 70,84" fill="none" stroke="var(--ink)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>' +
   '</svg>';
 }
 
