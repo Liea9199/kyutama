@@ -70,7 +70,9 @@
   var IMG_W = 280;
   var IMG_H = IMG_W * 592 / 624;
   var CENTER = { x: W / 2, y: 268 };
-  var BODY_RX = IMG_W * 0.36, BODY_RY = IMG_H * 0.36;
+  // 画像内の丸い胴体（耳やしっぽを除く）は中心より下にある
+  var BODY = { x: CENTER.x, y: CENTER.y + IMG_H * 0.16 };
+  var BODY_RX = IMG_W * 0.31, BODY_RY = IMG_H * 0.30;
   var BRUSH_R = 26;
   var TANGLE_HP = 140;
   var CLEAN_PER_PX = 0.06;
@@ -169,18 +171,18 @@
   }
 
   function inBody(x, y) {
-    var dx = (x - CENTER.x) / BODY_RX, dy = (y - CENTER.y) / BODY_RY;
+    var dx = (x - BODY.x) / BODY_RX, dy = (y - BODY.y) / BODY_RY;
     return dx * dx + dy * dy <= 1;
   }
 
   function randomBodyPoint(margin) {
     for (var i = 0; i < 100; i++) {
-      var x = CENTER.x + (Math.random() * 2 - 1) * BODY_RX;
-      var y = CENTER.y + (Math.random() * 2 - 1) * BODY_RY;
-      var dx = (x - CENTER.x) / (BODY_RX - margin), dy = (y - CENTER.y) / (BODY_RY - margin);
+      var x = BODY.x + (Math.random() * 2 - 1) * BODY_RX;
+      var y = BODY.y + (Math.random() * 2 - 1) * BODY_RY;
+      var dx = (x - BODY.x) / (BODY_RX - margin), dy = (y - BODY.y) / (BODY_RY - margin);
       if (dx * dx + dy * dy <= 1) return { x: x, y: y };
     }
-    return { x: CENTER.x, y: CENTER.y };
+    return { x: BODY.x, y: BODY.y };
   }
 
   // ---- お客様 ----
@@ -198,9 +200,7 @@
         if (spaced || tries === 39) { tangles.push({ x: p.x, y: p.y, hp: TANGLE_HP, seed: Math.random() * 6 }); break; }
       }
     }
-    var dust = [];
-    for (n = 0; n < 26; n++) dust.push(randomBodyPoint(6));
-    guest = { kind: kind, tangles: tangles, dust: dust, clean: 0, anger: 0, phase: 'arrive', phaseT: 0, happy: false, heartDist: 0, angryCool: 0 };
+    guest = { kind: kind, tangles: tangles, clean: 0, anger: 0, phase: 'arrive', phaseT: 0, happy: false, heartDist: 0, angryCool: 0 };
   }
 
   function guestDone() {
@@ -426,20 +426,13 @@
     if (img.complete && img.naturalWidth) {
       ctx.drawImage(img, CENTER.x - IMG_W / 2 + ox, CENTER.y - IMG_H / 2, IMG_W, IMG_H);
     }
-    // 汚れはきれい度に合わせて薄くなる
-    ctx.fillStyle = 'rgba(110, 90, 70, ' + (0.45 * (1 - guest.clean / 100)) + ')';
-    guest.dust.forEach(function (d) {
-      ctx.beginPath();
-      ctx.arc(d.x + ox, d.y, 3, 0, Math.PI * 2);
-      ctx.fill();
-    });
     guest.tangles.forEach(function (t) { drawTangle(t, kind.tangleColor, ox); });
 
     // 怒りに合わせて赤みをかける
     if (guest.anger > 40) {
       ctx.fillStyle = 'rgba(232, 72, 63, ' + ((guest.anger - 40) / 60 * 0.28) + ')';
       ctx.beginPath();
-      ctx.ellipse(CENTER.x + ox, CENTER.y, BODY_RX * 1.05, BODY_RY * 1.05, 0, 0, Math.PI * 2);
+      ctx.ellipse(BODY.x + ox, BODY.y, BODY_RX * 1.05, BODY_RY * 1.05, 0, 0, Math.PI * 2);
       ctx.fill();
     }
 
