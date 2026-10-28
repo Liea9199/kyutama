@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>玖球のカーレース</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Nunito:wght@400;600;700;800&display=swap">
+<link rel="stylesheet" href="../style.css">
+<style>
+  .race-wrap { position: relative; width: 100%; max-width: 420px; }
+
+  .race-canvas {
+    position: relative; z-index: 1;
+    display: block;
+    width: 100%; height: auto;
+    aspect-ratio: 400 / 560;
+    border-radius: 18px;
+    box-shadow: 0 8px 18px var(--shadow);
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  .race-controls {
+    position: relative; z-index: 1;
+    display: flex; gap: 14px; justify-content: center;
+    width: 100%; max-width: 420px;
+  }
+  .race-controls .btn {
+    flex: 1; max-width: 160px;
+    font-size: 1.3rem;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+</style>
+</head>
+<body>
+
+<div class="scene">
+  <div class="sky-deco" aria-hidden="true">
+    <div class="orb"></div>
+    <div class="stars"></div>
+  </div>
+
+  <a class="back-link" href="../index.html">← ミニゲーム一覧</a>
+
+  <header class="hud">
+    <h1>玖球のカーレース</h1>
+    <p class="tagline">ライバルを追い抜いて1位でゴールしよう!</p>
+    <div class="stats">
+      <div class="stat"><span class="stat-label">順位</span><span class="stat-value" id="rank">-</span></div>
+      <div class="stat"><span class="stat-label">タイム</span><span class="stat-value" id="time">0.00</span></div>
+      <div class="stat"><span class="stat-label">ベスト</span><span class="stat-value" id="best">-</span></div>
+    </div>
+  </header>
+
+  <div class="race-wrap">
+    <canvas class="race-canvas" id="canvas" aria-label="カーレースのゲーム画面"></canvas>
+    <div class="overlay" id="overlay">
+      <div class="overlay-card">
+        <h2 id="overlayTitle">準備はいい?</h2>
+        <p id="overlayMsg">左右に動いてライバルを追い抜こう!<br>芝生に出ると遅くなるよ。黄色い矢印でダッシュ!</p>
+        <button class="btn" id="actionBtn">スタート</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="race-controls">
+    <button class="btn" id="leftBtn" type="button" aria-label="左に曲がる">←</button>
+    <button class="btn" id="rightBtn" type="button" aria-label="右に曲がる">→</button>
+  </div>
+
+  <p class="hint">←→キー、下のボタン、または画面の左右を押しっぱなしでハンドルを切ろう。</p>
+</div>
+
+<script src="mole-icon.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var BEST_KEY = 'kyutama-race-besttime';
+  // 画面はこの論理サイズで描き、表示サイズに合わせて拡大縮小する
+  var W = 400, H = 560;
+  var PLAYER_Y = H - 120;
+  var ROAD_HALF = 118;
+  var RACE_LEN = 14000;
+  var MAX_SPEED = 400;
+  var BOOST_SPEED = 560;
+  var BOOST_TIME = 1.1;
+  var OFFROAD_SPEED = 150;
+  var ACCEL = 170;
+  var STEER_SPEED = 250;
+  var CAR_W = 38, CAR_L = 56;
+  var COUNTDOWN = 3;
+  var MOLE_ASPECT = 592 / 624;
+
+  var canvas = document.getElementById('canvas');
+  var ctx = canvas.getContext('2d');
+  var rankEl = document.getElementById('rank');
+  var timeEl = document.getElementById('time');
+  var bestEl = document.getElementById('best');
+  var overlay = document.getElementById('overlay');
+  var overlayTitle = document.getElementById('overlayTitle');
+  var overlayMsg = document.getElementById('overlayMsg');
+  var actionBtn = document.getElementById('actionBtn');
+  var leftBtn = document.getElementById('leftBtn');
+  var rightBtn = document.getElementById('rightBtn');
+
+  // 主人公は紫の玖球。ライバルは色違いの玖球と豹球
+  var RACERS = [
+    { file: 'mole.png',       body: '#8C76C9' },
+    { file: 'mole-green.png', body: '#5DAA4E' },
+    { file: 'mole-red.png',   body: '#D9534F' },
+    { file: 'mole-brown.png', body: '#A0714A' },
+    { file: 'leopard.png',    body: '#E0A43A' }
+  ];
+  RACERS.forEach(function (r) { r.img = loadImage(r.file); });
+
+  var state = { playing: false, phase: 'idle', countdown: 0, time: 0, best: 0, rank: 0 };
+  var player = null;
+  var rivals = [];
+  var boosts = [];
+  var input = { left: false, right: false, pointer: 0 };
+  var rafId = null;
+  var lastTs = 0;
+  var audioCtx = null;
+  var colors = {};
+
+  function loadImage(file) {
+    var img = new Image();
+    img.src = new URL(file, MOLE_PNG_BASE).href;
+    img.addEventListener('load', function () { if (!state.playing) render(); });
+    return img;
+  }
+
+  function loadBest() {
+    try {
+      var v = parseInt(localStorage.getItem(BEST_KEY), 10);
+      return isNaN(v) ? 0 : v;
+    } catch (e) { return 0; }
+  }
+  function saveBest(v) {
+    try { localStorage.setItem(BEST_KEY, String(v)); } catch (e) {}
+  }
+
+  function readColors() {
+    var cs = getComputedStyle(document.documentElement);
+    ['grass', 'grass-deep', 'ink', 'accent'].forEach(function (name) {
+      colors[name] = cs.getPropertyValue('--' + name).trim();
+    });
+  }
+
+  function setupCanvas() {
+    var dpr = Math.min(window.devicePixelRatio || 1, 3);
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function ensureAudio() {
+    if (!audioCtx) {
+      try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+    } else if (audioCtx.state === 'suspended') {
+      try { audioCtx.resume(); } catch (e) {}
+    }
+  }
+
+  function playTone(type, from, to, dur, vol) {
+    if (!audioCtx) return;
+    try {
+      var t = audioCtx.currentTime;
+      var osc = audioCtx.createOscillator();
+      var gain = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(from, t);
+      osc.frequency.exponentialRampToValueAtTime(to, t + dur);
+      gain.gain.setValueAtTime(vol, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + dur + 0.02);
+    } catch (e) {}
+  }
+
+  function formatTime(ms) { return (ms / 1000).toFixed(2); }
+
+  // コースの中心線。s はスタートからの距離。スタート直後はまっすぐ
+  function roadCenter(s) {
+    var ease = Math.min(Math.max(s, 0) / 1200, 1);
+    return W / 2 + ease * (55 * Math.sin(s / 700) + 30 * Math.sin(s / 310 + 1.3));
+  }
+
+  function makeCar(index, s, offset) {
+    return {
+      racer: RACERS[index], s: s, x: roadCenter(s) + offset, v: 0,
+      offset: offset, targetOffset: offset, pace: 1, laneTimer: 0,
+      boostT: 0, bumpT: 0, finishTime: 0
+    };
+  }
+
+  function buildRace() {
+    // 主人公は最後尾からスタート
+    player = makeCar(0, 0, 0);
+    rivals = [
+      makeCar(1, 260, -60),
+      makeCar(2, 260, 60),
+      makeCar(3, 130, -60),
+      makeCar(4, 130, 60)
+    ];
+    rivals.forEach(function (c, i) { c.pace = 0.84 + i * 0.03 + Math.random() * 0.04; });
+    boosts = [];
+    for (var s = 1500; s < RACE_LEN - 600; s += 900 + Math.random() * 700) {
+      boosts.push({ s: s, offset: (Math.random() * 2 - 1) * (ROAD_HALF - 34) });
+    }
+  }
+
+  function currentRank() {
+    var ahead = rivals.filter(function (c) { return c.s > player.s; }).length;
+    return ahead + 1;
+  }
+
+  function updateHud() {
+    timeEl.textContent = formatTime(state.time);
+    rankEl.textContent = state.rank ? state.rank + '/' + (rivals.length + 1) : '-';
+    bestEl.textContent = state.best ? formatTime(state.best) : '-';
+  }
+
+  function startGame() {
+    ensureAudio();
+    buildRace();
+    state.time = 0;
+    state.rank = currentRank();
+    state.phase = 'countdown';
+    state.countdown = COUNTDOWN;
+    state.playing = true;
+    updateHud();
+    overlay.hidden = true;
+    playTone('square', 440, 440, 0.15, 0.08);
+    lastTs = performance.now();
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function finishRace() {
+    state.playing = false;
+    state.phase = 'idle';
+    cancelAnimationFrame(rafId);
+    render();
+
+    var rank = 1 + rivals.filter(function (c) { return c.finishTime > 0; }).length;
+    var isRecord = rank === 1 && (!state.best || state.time < state.best);
+    if (isRecord) {
+      state.best = state.time;
+      saveBest(state.best);
+    }
+    state.rank = rank;
+    updateHud();
+
+    var titles = ['優勝!', '2位!', '3位!', '4位', '5位'];
+    overlayTitle.textContent = titles[rank - 1] || rank + '位';
+    overlayMsg.innerHTML = 'タイム: <span class="result-score">' + formatTime(state.time) + '</span>' +
+      (isRecord ? '<br><span class="new-record">🎉 ベストタイム更新!</span>'
+        : rank === 1 ? '' : '<br>1位でゴールするとベストタイムが記録されるよ');
+    actionBtn.textContent = 'もう一度あそぶ';
+    overlay.hidden = false;
+    playTone('sine', rank === 1 ? 660 : 440, rank === 1 ? 1320 : 520, 0.4, 0.15);
+  }
+
+  // ---- 走行 ----
+
+  function steerInput() {
+    var dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+    return dir !== 0 ? dir : input.pointer;
+  }
+
+  function updatePlayer(dt) {
+    var c = player;
+    var offroad = Math.abs(c.x - roadCenter(c.s)) > ROAD_HALF;
+    var top = c.boostT > 0 ? BOOST_SPEED : offroad ? OFFROAD_SPEED : MAX_SPEED;
+    if (c.v > top) c.v = Math.max(top, c.v - ACCEL * 2.5 * dt);
+    else c.v = Math.min(top, c.v + ACCEL * dt);
+    c.boostT = Math.max(0, c.boostT - dt);
+
+    // 遅いときはハンドルも鈍くなる
+    c.x += steerInput() * STEER_SPEED * (0.4 + 0.6 * Math.min(c.v / MAX_SPEED, 1)) * dt;
+    var edge = ROAD_HALF + 60;
+    var center = roadCenter(c.s);
+    c.x = Math.max(center - edge, Math.min(center + edge, c.x));
+    c.x = Math.max(CAR_W / 2, Math.min(W - CAR_W / 2, c.x));
+    c.s += c.v * dt;
+
+    boosts.forEach(function (b) {
+      if (b.used) return;
+      if (Math.abs(b.s - c.s) < 26 && Math.abs(roadCenter(b.s) + b.offset - c.x) < 30) {
+        b.used = true;
+        c.boostT = BOOST_TIME;
+        c.v = Math.max(c.v, MAX_SPEED + 60);
+        playTone('sawtooth', 300, 900, 0.3, 0.08);
+      }
+    });
+  }
+
+  function updateRival(c, dt) {
+    // 主人公との差に合わせて速さを少し変え、最後まで競り合いになるようにする
+    var gap = c.s - player.s;
+    var rubber = Math.max(-0.06, Math.min(0.06, -gap / 6000));
+    var top = MAX_SPEED * (c.pace + rubber);
+    if (c.bumpT > 0) top *= 0.7;
+    c.bumpT = Math.max(0, c.bumpT - dt);
+    if (c.finishTime) top = MAX_SPEED * 0.4;
+    c.v = c.v < top ? Math.min(top, c.v + ACCEL * dt) : Math.max(top, c.v - ACCEL * dt);
+
+    c.laneTimer -= dt;
+    if (c.laneTimer <= 0) {
+      c.laneTimer = 1.2 + Math.random() * 2;
+      c.targetOffset = (Math.random() * 2 - 1) * (ROAD_HALF - 30);
+    }
+    c.offset += Math.max(-1, Math.min(1, c.targetOffset - c.offset)) * 90 * dt;
+    c.offset = Math.max(-ROAD_HALF + 20, Math.min(ROAD_HALF - 20, c.offset));
+    c.s += c.v * dt;
+    c.x = roadCenter(c.s) + c.offset;
+    if (!c.finishTime && c.s >= RACE_LEN) c.finishTime = state.time;
+  }
+
+  function collide(a, b) {
+    var dx = b.x - a.x, ds = b.s - a.s;
+    if (Math.abs(dx) >= CAR_W || Math.abs(ds) >= CAR_L) return;
+    // 横に押し合い、後ろからぶつかった方が減速する
+    var push = (CAR_W - Math.abs(dx)) / 2 + 1;
+    var dir = dx === 0 ? (Math.random() < 0.5 ? -1 : 1) : Math.sign(dx);
+    a.x -= dir * push;
+    b.x += dir * push;
+    if (b !== player) b.offset += dir * push;
+    if (a !== player) a.offset -= dir * push;
+    var back = ds > 0 ? a : b;
+    if (back === player) {
+      if (player.bumpT <= 0) playTone('square', 180, 90, 0.15, 0.1);
+      player.v *= 0.82;
+      player.bumpT = 0.3;
+    } else {
+      back.v *= 0.85;
+      back.bumpT = 0.6;
+    }
+  }
+
+  function tick(ts) {
+    var dt = Math.min((ts - lastTs) / 1000, 0.05);
+    lastTs = ts;
+
+    if (state.phase === 'countdown') {
+      var shown = Math.ceil(state.countdown);
+      state.countdown -= dt;
+      if (state.countdown <= 0) {
+        state.phase = 'race';
+        playTone('square', 880, 880, 0.3, 0.1);
+      } else if (Math.ceil(state.countdown) !== shown) {
+        playTone('square', 440, 440, 0.15, 0.08);
+      }
+    } else {
+      state.time += dt * 1000;
+      updatePlayer(dt);
+      player.bumpT = Math.max(0, player.bumpT - dt);
+      rivals.forEach(function (c) { updateRival(c, dt); });
+      var cars = [player].concat(rivals);
+      for (var i = 0; i < cars.length; i++) {
+        for (var j = i + 1; j < cars.length; j++) collide(cars[i], cars[j]);
+      }
+      state.rank = currentRank();
+      updateHud();
+      if (player.s >= RACE_LEN) {
+        finishRace();
+        return;
+      }
+    }
+
+    render();
+    rafId = requestAnimationFrame(tick);
+  }
+
+  // ---- 描画 ----
+
+  function screenY(s) { return PLAYER_Y - (s - player.s); }
+
+  function drawRoad() {
+    ctx.fillStyle = colors.grass;
+    ctx.fillRect(0, 0, W, H);
+
+    // 芝生のしま模様で速さが伝わるようにする
+    ctx.fillStyle = colors['grass-deep'];
+    ctx.globalAlpha = 0.25;
+    var stripe = 80;
+    var first = Math.floor((player.s - (H - PLAYER_Y)) / stripe) * stripe;
+    for (var gs = first; gs < player.s + PLAYER_Y + stripe; gs += stripe) {
+      if ((gs / stripe) % 2 === 0) ctx.fillRect(0, screenY(gs) - stripe, W, stripe);
+    }
+    ctx.globalAlpha = 1;
+
+    var step = 14;
+    var sFrom = player.s - (H - PLAYER_Y) - step;
+    var sTo = player.s + PLAYER_Y + step;
+    var s;
+
+    // 縁石(赤白)
+    for (s = Math.floor(sFrom / 40) * 40; s < sTo; s += 40) {
+      ctx.fillStyle = (s / 40) % 2 === 0 ? '#E8483F' : '#FFFFFF';
+      ctx.beginPath();
+      ctx.moveTo(roadCenter(s) - ROAD_HALF - 10, screenY(s));
+      ctx.lineTo(roadCenter(s + 40) - ROAD_HALF - 10, screenY(s + 40));
+      ctx.lineTo(roadCenter(s + 40) + ROAD_HALF + 10, screenY(s + 40));
+      ctx.lineTo(roadCenter(s) + ROAD_HALF + 10, screenY(s));
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // 路面
+    ctx.fillStyle = '#6E7380';
+    ctx.beginPath();
+    for (s = sFrom; s <= sTo; s += step) ctx.lineTo(roadCenter(s) - ROAD_HALF, screenY(s));
+    for (s = sTo; s >= sFrom; s -= step) ctx.lineTo(roadCenter(s) + ROAD_HALF, screenY(s));
+    ctx.closePath();
+    ctx.fill();
+
+    // 中央の破線
+    ctx.strokeStyle = 'rgba(255, 255, 255, .6)';
+    ctx.lineWidth = 4;
+    for (s = Math.floor(sFrom / 60) * 60; s < sTo; s += 60) {
+      ctx.beginPath();
+      ctx.moveTo(roadCenter(s), screenY(s));
+      ctx.lineTo(roadCenter(s + 30), screenY(s + 30));
+      ctx.stroke();
+    }
+
+    drawCheckerLine(0, 'rgba(255, 255, 255, .85)');
+    drawCheckerLine(RACE_LEN, null);
+  }
+
+  function drawCheckerLine(s, plain) {
+    var y = screenY(s);
+    if (y < -20 || y > H + 20) return;
+    var left = roadCenter(s) - ROAD_HALF;
+    if (plain) {
+      ctx.fillStyle = plain;
+      ctx.fillRect(left, y - 3, ROAD_HALF * 2, 6);
+      return;
+    }
+    var cell = ROAD_HALF * 2 / 12;
+    for (var row = 0; row < 2; row++) {
+      for (var col = 0; col < 12; col++) {
+        ctx.fillStyle = (row + col) % 2 === 0 ? '#FFFFFF' : '#222222';
+        ctx.fillRect(left + col * cell, y - cell * (row + 1), cell, cell);
+      }
+    }
+  }
+
+  function drawBoost(b) {
+    var y = screenY(b.s);
+    if (y < -30 || y > H + 30) return;
+    var x = roadCenter(b.s) + b.offset;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.globalAlpha = b.used ? 0.35 : 1;
+    ctx.fillStyle = '#FFD23F';
+    ctx.strokeStyle = '#C98A00';
+    ctx.lineWidth = 2;
+    for (var k = 0; k < 2; k++) {
+      ctx.beginPath();
+      ctx.moveTo(-16, 8 - k * 14);
+      ctx.lineTo(0, -6 - k * 14);
+      ctx.lineTo(16, 8 - k * 14);
+      ctx.lineTo(16, 16 - k * 14);
+      ctx.lineTo(0, 2 - k * 14);
+      ctx.lineTo(-16, 16 - k * 14);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function drawCar(c) {
+    var y = screenY(c.s);
+    if (y < -CAR_L || y > H + CAR_L) return;
+    // 曲がっている向きに少し傾ける
+    var tilt = Math.atan2(roadCenter(c.s + 20) - roadCenter(c.s - 20), 40);
+    if (c === player) tilt = steerInput() * 0.18;
+    ctx.save();
+    ctx.translate(c.x, y);
+    ctx.rotate(tilt);
+
+    ctx.fillStyle = 'rgba(0, 0, 0, .25)';
+    roundRect(-CAR_W / 2 + 3, -CAR_L / 2 + 5, CAR_W, CAR_L, 10);
+    ctx.fill();
+
+    ctx.fillStyle = '#222222';
+    [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function (p) {
+      roundRect(p[0] * (CAR_W / 2 + 2) - 5, p[1] * CAR_L * 0.3 - 8, 10, 16, 3);
+      ctx.fill();
+    });
+
+    ctx.fillStyle = c.racer.body;
+    roundRect(-CAR_W / 2, -CAR_L / 2, CAR_W, CAR_L, 10);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255, 255, 255, .35)';
+    roundRect(-CAR_W / 2 + 6, -CAR_L / 2 + 4, CAR_W - 12, 8, 4);
+    ctx.fill();
+
+    var img = c.racer.img;
+    if (img.complete && img.naturalWidth) {
+      var w = CAR_W * 1.25;
+      ctx.drawImage(img, -w / 2, -w * MOLE_ASPECT / 2 + 4, w, w * MOLE_ASPECT);
+    }
+
+    if (c.boostT > 0) {
+      ctx.fillStyle = 'rgba(255, 140, 40, .85)';
+      ctx.beginPath();
+      ctx.moveTo(-8, CAR_L / 2);
+      ctx.lineTo(0, CAR_L / 2 + 14 + Math.random() * 10);
+      ctx.lineTo(8, CAR_L / 2);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawProgress() {
+    var x = W - 18, top = 24, bottom = H - 24;
+    ctx.fillStyle = 'rgba(0, 0, 0, .25)';
+    roundRect(x - 4, top, 8, bottom - top, 4);
+    ctx.fill();
+    [player].concat(rivals).slice().reverse().forEach(function (c) {
+      var p = Math.min(Math.max(c.s / RACE_LEN, 0), 1);
+      ctx.fillStyle = c.racer.body;
+      ctx.strokeStyle = c === player ? '#FFFFFF' : 'rgba(0, 0, 0, .4)';
+      ctx.lineWidth = c === player ? 3 : 1.5;
+      ctx.beginPath();
+      ctx.arc(x, bottom - p * (bottom - top), c === player ? 7 : 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    });
+  }
+
+  function render() {
+    if (!colors.ink) return;
+    if (!player) buildRace();
+    drawRoad();
+    boosts.forEach(drawBoost);
+    // 奥(上)にいる車から描く
+    [player].concat(rivals).sort(function (a, b) { return b.s - a.s; }).forEach(drawCar);
+    drawProgress();
+
+    if (state.phase === 'countdown') {
+      var n = Math.ceil(state.countdown);
+      ctx.fillStyle = colors.accent;
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 6;
+      ctx.font = '800 96px "Baloo 2", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.strokeText(String(n), W / 2, H / 2 - 40);
+      ctx.fillText(String(n), W / 2, H / 2 - 40);
+    } else if (state.phase === 'race' && state.time < 800) {
+      ctx.globalAlpha = 1 - state.time / 800;
+      ctx.fillStyle = colors.accent;
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 6;
+      ctx.font = '800 80px "Baloo 2", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.strokeText('GO!', W / 2, H / 2 - 40);
+      ctx.fillText('GO!', W / 2, H / 2 - 40);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // ---- 入力 ----
+
+  function holdButton(btn, key) {
+    btn.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      input[key] = true;
+      try { btn.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(function (type) {
+      btn.addEventListener(type, function () { input[key] = false; });
+    });
+    btn.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  }
+  holdButton(leftBtn, 'left');
+  holdButton(rightBtn, 'right');
+
+  // 画面の左半分/右半分を押している間、その向きに曲がる
+  function pointerSteer(e) {
+    var rect = canvas.getBoundingClientRect();
+    input.pointer = (e.clientX - rect.left) < rect.width / 2 ? -1 : 1;
+  }
+  canvas.addEventListener('pointerdown', function (e) {
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+    pointerSteer(e);
+  });
+  canvas.addEventListener('pointermove', function (e) { if (input.pointer) pointerSteer(e); });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(function (type) {
+    canvas.addEventListener(type, function () { input.pointer = 0; });
+  });
+
+  window.addEventListener('keydown', function (e) {
+    if (e.code === 'ArrowLeft') { e.preventDefault(); input.left = true; }
+    else if (e.code === 'ArrowRight') { e.preventDefault(); input.right = true; }
+  });
+  window.addEventListener('keyup', function (e) {
+    if (e.code === 'ArrowLeft') input.left = false;
+    else if (e.code === 'ArrowRight') input.right = false;
+  });
+  window.addEventListener('blur', function () { input.left = input.right = false; input.pointer = 0; });
+
+  actionBtn.addEventListener('click', startGame);
+
+  try {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+      readColors();
+      render();
+    });
+  } catch (e) {}
+
+  function boot(data) {
+    state.best = (data && typeof data.best === 'number') ? data.best : loadBest();
+    readColors();
+    setupCanvas();
+    buildRace();
+    updateHud();
+    render();
+  }
+
+  try {
+    if (window.claude && window.claude.hot && window.claude.hot.snapshot) {
+      window.claude.hot.snapshot(function () { return { best: state.best }; });
+    }
+    if (window.claude && window.claude.hot && window.claude.hot.ready) {
+      window.claude.hot.ready(boot);
+    } else {
+      boot(window.claude && window.claude.hot ? window.claude.hot.data : null);
+    }
+  } catch (e) {
+    boot(null);
+  }
+})();
+</script>
+</body>
+</html>

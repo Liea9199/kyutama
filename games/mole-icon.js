@@ -41,11 +41,11 @@ function moleSvgMarkup(idSuffix, furColor) {
   '</svg>';
 }
 
-// 玖球はPNG画像で表示する。紫(デフォルト)・緑(mole-green.png)・赤(mole-red.png)のみ。それ以外の色違いは moleSvgMarkup を使う。
+// 玖球はPNG画像で表示する。紫(デフォルト)・緑(mole-green.png)・赤(mole-red.png)・茶(mole-brown.png)のみ。それ以外の色違いは moleSvgMarkup を使う。
 // index.html と games/*.html で相対パスが異なるため、このスクリプトの位置を基準に解決する。
 var MOLE_PNG_BASE = document.currentScript.src;
 
-// variant: 省略で紫、'green' / 'red' で色違い。extraClass は <img> に追加するクラス。
+// variant: 省略で紫、'green' / 'red' / 'brown' で色違い。extraClass は <img> に追加するクラス。
 function moleImgMarkup(variant, extraClass) {
   var file = variant ? 'mole-' + variant + '.png' : 'mole.png';
   var cls = 'mole-svg' + (extraClass ? ' ' + extraClass : '');
