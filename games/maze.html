@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>豹球の豆まきめいろ</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Nunito:wght@400;600;700;800&display=swap">
+<link rel="stylesheet" href="../style.css">
+<style>
+  .maze-wrap { position: relative; width: 100%; max-width: 420px; }
+
+  .maze-canvas {
+    position: relative; z-index: 1;
+    display: block;
+    width: 100%; height: auto;
+    aspect-ratio: 390 / 450;
+    border-radius: 18px;
+    box-shadow: 0 8px 18px var(--shadow);
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  .maze-controls {
+    position: relative; z-index: 1;
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    width: 100%; max-width: 420px;
+  }
+  .maze-controls-row {
+    display: flex; gap: 14px; justify-content: center; width: 100%;
+  }
+  .maze-controls .btn {
+    flex: 1; max-width: 110px;
+    font-size: 1.3rem;
+    touch-action: manipulation;
+  }
+  .maze-controls .btn-throw { max-width: 240px; font-size: 1.02rem; }
+</style>
+</head>
+<body>
+
+<div class="scene">
+  <div class="sky-deco" aria-hidden="true">
+    <div class="orb"></div>
+    <div class="stars"></div>
+  </div>
+
+  <a class="back-link" href="../index.html">← ミニゲーム一覧</a>
+
+  <header class="hud">
+    <h1>豹球の豆まきめいろ</h1>
+    <p class="tagline">迷路の豆を食べつくそう!鬼の玖球には豆をまいて対抗!</p>
+    <div class="stats">
+      <div class="stat"><span class="stat-label">スコア</span><span class="stat-value" id="score">0</span></div>
+      <div class="stat"><span class="stat-label">ステージ</span><span class="stat-value" id="stage">1</span></div>
+      <div class="stat"><span class="stat-label">残り</span><span class="stat-value" id="lives">♥♥♥</span></div>
+      <div class="stat"><span class="stat-label">豆まき</span><span class="stat-value" id="ammo">3</span></div>
+      <div class="stat"><span class="stat-label">ハイスコア</span><span class="stat-value" id="highScore">0</span></div>
+    </div>
+  </header>
+
+  <div class="maze-wrap">
+    <canvas class="maze-canvas" id="canvas" aria-label="豆まきめいろのゲーム画面"></canvas>
+    <div class="overlay" id="overlay">
+      <div class="overlay-card">
+        <h2 id="overlayTitle">準備はいい?</h2>
+        <p id="overlayMsg">豹球を動かして迷路の豆をぜんぶ食べよう!<br>鬼の玖球につかまらないように。<br>豆が当たった鬼はしばらく動けなくなるよ。</p>
+        <button class="btn" id="actionBtn">スタート</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="maze-controls">
+    <div class="maze-controls-row">
+      <button class="btn" id="upBtn" type="button" aria-label="上に進む">↑</button>
+    </div>
+    <div class="maze-controls-row">
+      <button class="btn" id="leftBtn" type="button" aria-label="左に進む">←</button>
+      <button class="btn" id="downBtn" type="button" aria-label="下に進む">↓</button>
+      <button class="btn" id="rightBtn" type="button" aria-label="右に進む">→</button>
+    </div>
+    <div class="maze-controls-row">
+      <button class="btn btn-throw" id="throwBtn" type="button">豆をまく!</button>
+    </div>
+  </div>
+
+  <p class="hint">矢印キー・ボタン・画面のスワイプで進む向きを変えよう。スペースキーか「豆をまく!」で向いている方に豆を投げるよ(1ステージ3回)。</p>
+</div>
+
+<script src="mole-icon.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var HIGH_KEY = 'kyutama-maze-highscore';
+  // 画面はこの論理サイズで描き、表示サイズに合わせて拡大縮小する
+  var COLS = 13, ROWS = 15, T = 30;
+  var W = COLS * T, H = ROWS * T;
+  var START = { x: 5, y: 13 };
+  var LIVES = 3;
+  var AMMO = 3;
+  var PLAYER_SPEED = 4.5;
+  var THROW_SPEED = 11;
+  // 豆の当たり判定の半径(マス単位)。少し外れていても当たるように大きめにする
+  var THROW_HIT_RADIUS = 1.3;
+  var STUN_TIME = 4;
+  var INVINCIBLE_TIME = 1.6;
+  var READY_TIME = 1;
+  var BEAN_SCORE = 10;
+  var STUN_SCORE = 100;
+  var CLEAR_SCORE = 500;
+  var MOLE_ASPECT = 592 / 624;
+  var DIRS = { up: { dx: 0, dy: -1 }, down: { dx: 0, dy: 1 }, left: { dx: -1, dy: 0 }, right: { dx: 1, dy: 0 } };
+  var DIR_LIST = [DIRS.up, DIRS.down, DIRS.left, DIRS.right];
+
+  var canvas = document.getElementById('canvas');
+  var ctx = canvas.getContext('2d');
+  var scoreEl = document.getElementById('score');
+  var stageEl = document.getElementById('stage');
+  var livesEl = document.getElementById('lives');
+  var ammoEl = document.getElementById('ammo');
+  var highScoreEl = document.getElementById('highScore');
+  var overlay = document.getElementById('overlay');
+  var overlayTitle = document.getElementById('overlayTitle');
+  var overlayMsg = document.getElementById('overlayMsg');
+  var actionBtn = document.getElementById('actionBtn');
+
+  var state = { playing: false, stage: 1, score: 0, lives: LIVES, ammo: AMMO, highScore: 0, readyT: 0, beansLeft: 0 };
+  var grid = [];
+  var beans = [];
+  var holes = [];
+  var player = null;
+  var oni = [];
+  var throws = [];
+  var playerDist = [];
+  var want = null;
+  var nextAction = startGame;
+  var rafId = null;
+  var lastTs = 0;
+  var audioCtx = null;
+  var colors = {};
+
+  // 操作役は豹球、鬼は紫の玖球
+  var images = { player: loadImage('leopard.png'), oni: loadImage('mole.png') };
+
+  function loadImage(file) {
+    var img = new Image();
+    img.src = new URL(file, MOLE_PNG_BASE).href;
+    img.addEventListener('load', function () { if (!state.playing) render(); });
+    return img;
+  }
+
+  function loadHigh() {
+    try {
+      var v = parseInt(localStorage.getItem(HIGH_KEY), 10);
+      return isNaN(v) ? 0 : v;
+    } catch (e) { return 0; }
+  }
+  function saveHigh(v) {
+    try { localStorage.setItem(HIGH_KEY, String(v)); } catch (e) {}
+  }
+
+  function readColors() {
+    var cs = getComputedStyle(document.documentElement);
+    ['grass', 'grass-deep', 'dirt', 'dirt-deep', 'dirt-rim', 'ink', 'accent'].forEach(function (name) {
+      colors[name] = cs.getPropertyValue('--' + name).trim();
+    });
+  }
+
+  function setupCanvas() {
+    var dpr = Math.min(window.devicePixelRatio || 1, 3);
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function ensureAudio() {
+    if (!audioCtx) {
+      try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+    } else if (audioCtx.state === 'suspended') {
+      try { audioCtx.resume(); } catch (e) {}
+    }
+  }
+
+  function playTone(type, from, to, dur, vol) {
+    if (!audioCtx) return;
+    try {
+      var t = audioCtx.currentTime;
+      var osc = audioCtx.createOscillator();
+      var gain = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(from, t);
+      osc.frequency.exponentialRampToValueAtTime(to, t + dur);
+      gain.gain.setValueAtTime(vol, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + dur + 0.02);
+    } catch (e) {}
+  }
+
+  // ---- 迷路 ----
+
+  function isOpen(x, y) { return y >= 0 && y < ROWS && x >= 0 && x < COLS && grid[y][x] === 0; }
+
+  function shuffle(a) {
+    for (var i = a.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var tmp = a[i]; a[i] = a[j]; a[j] = tmp;
+    }
+    return a;
+  }
+
+  // 穴掘り法で迷路を作り、行き止まりの多くを抜いて逃げ道のある迷路にする
+  function buildMaze() {
+    grid = [];
+    for (var y = 0; y < ROWS; y++) {
+      grid.push([]);
+      for (var x = 0; x < COLS; x++) grid[y].push(1);
+    }
+    var stack = [{ x: 1, y: 1 }];
+    grid[1][1] = 0;
+    while (stack.length) {
+      var cur = stack[stack.length - 1];
+      var next = shuffle(DIR_LIST.slice()).filter(function (d) {
+        var nx = cur.x + d.dx * 2, ny = cur.y + d.dy * 2;
+        return nx > 0 && nx < COLS - 1 && ny > 0 && ny < ROWS - 1 && grid[ny][nx] === 1;
+      })[0];
+      if (!next) { stack.pop(); continue; }
+      grid[cur.y + next.dy][cur.x + next.dx] = 0;
+      grid[cur.y + next.dy * 2][cur.x + next.dx * 2] = 0;
+      stack.push({ x: cur.x + next.dx * 2, y: cur.y + next.dy * 2 });
+    }
+    for (y = 1; y < ROWS - 1; y += 2) {
+      for (x = 1; x < COLS - 1; x += 2) {
+        var exits = DIR_LIST.filter(function (d) { return isOpen(x + d.dx, y + d.dy); });
+        if (exits.length !== 1 || Math.random() > 0.8) continue;
+        var walls = shuffle(DIR_LIST.filter(function (d) {
+          var wx = x + d.dx, wy = y + d.dy;
+          return grid[wy][wx] === 1 && wx > 0 && wx < COLS - 1 && wy > 0 && wy < ROWS - 1;
+        }));
+        if (walls.length) grid[y + walls[0].dy][x + walls[0].dx] = 0;
+      }
+    }
+  }
+
+  function bfsFrom(sx, sy) {
+    var dist = [];
+    for (var y = 0; y < ROWS; y++) dist.push(new Array(COLS).fill(Infinity));
+    dist[sy][sx] = 0;
+    var queue = [{ x: sx, y: sy }];
+    for (var q = 0; q < queue.length; q++) {
+      var c = queue[q];
+      DIR_LIST.forEach(function (d) {
+        var nx = c.x + d.dx, ny = c.y + d.dy;
+        if (isOpen(nx, ny) && dist[ny][nx] === Infinity) {
+          dist[ny][nx] = dist[c.y][c.x] + 1;
+          queue.push({ x: nx, y: ny });
+        }
+      });
+    }
+    return dist;
+  }
+
+  // 鬼の出てくる穴は、主人公から遠く、互いに離れた場所に置く
+  function placeHoles(count) {
+    var dist = bfsFrom(START.x, START.y);
+    var cells = [];
+    for (var y = 1; y < ROWS - 1; y++) {
+      for (var x = 1; x < COLS - 1; x++) {
+        if (isOpen(x, y)) cells.push({ x: x, y: y, d: dist[y][x] });
+      }
+    }
+    cells.sort(function (a, b) { return b.d - a.d; });
+    holes = [];
+    for (var i = 0; i < cells.length && holes.length < count; i++) {
+      var c = cells[i];
+      var spaced = holes.every(function (h) { return Math.abs(h.x - c.x) + Math.abs(h.y - c.y) >= 5; });
+      if (spaced) holes.push(c);
+    }
+  }
+
+  function buildBeans() {
+    beans = [];
+    state.beansLeft = 0;
+    for (var y = 0; y < ROWS; y++) {
+      beans.push([]);
+      for (var x = 0; x < COLS; x++) {
+        var has = isOpen(x, y) && !(x === START.x && y === START.y) &&
+          !holes.some(function (h) { return h.x === x && h.y === y; });
+        beans[y].push(has);
+        if (has) state.beansLeft++;
+      }
+    }
+  }
+
+  // ---- キャラクター ----
+
+  function makeMover(x, y, speed) {
+    return { cx: x, cy: y, tx: x, ty: y, t: 0, moving: false, dir: null, face: DIRS.up, speed: speed };
+  }
+  function posX(m) { return m.cx + (m.tx - m.cx) * m.t; }
+  function posY(m) { return m.cy + (m.ty - m.cy) * m.t; }
+
+  function go(m, d) {
+    m.dir = d;
+    m.face = d;
+    m.tx = m.cx + d.dx;
+    m.ty = m.cy + d.dy;
+    m.moving = true;
+  }
+
+  // マスの中心に着くたびに decide で次の向きを決めながら進む
+  function advance(m, dist, decide, arrive) {
+    while (dist > 0) {
+      if (!m.moving) {
+        decide(m);
+        if (!m.moving) return;
+      }
+      var need = 1 - m.t;
+      if (dist < need) { m.t += dist; return; }
+      dist -= need;
+      m.cx = m.tx; m.cy = m.ty; m.t = 0;
+      m.moving = false;
+      if (arrive) arrive(m);
+    }
+  }
+
+  function decidePlayer(m) {
+    if (want && isOpen(m.cx + want.dx, m.cy + want.dy)) go(m, want);
+    else if (m.dir && isOpen(m.cx + m.dir.dx, m.cy + m.dir.dy)) go(m, m.dir);
+    else m.dir = null;
+  }
+
+  function eatBean(m) {
+    if (!beans[m.cy][m.cx]) return;
+    beans[m.cy][m.cx] = false;
+    state.beansLeft--;
+    state.score += BEAN_SCORE;
+    scoreEl.textContent = state.score;
+    playTone('sine', 620, 820, 0.05, 0.05);
+  }
+
+  function makeOni(hole) {
+    var o = makeMover(hole.x, hole.y, oniSpeed());
+    o.stunT = 0;
+    return o;
+  }
+
+  function chaseChance() { return Math.min(0.5 + state.stage * 0.06, 0.85); }
+  function oniSpeed() { return Math.min(2.8 + (state.stage - 1) * 0.25, 4.2); }
+
+  // 来た道は戻らず、ときどき主人公に近づく道を選ぶ
+  function decideOni(m) {
+    var options = DIR_LIST.filter(function (d) { return isOpen(m.cx + d.dx, m.cy + d.dy); });
+    if (options.length > 1 && m.dir) {
+      options = options.filter(function (d) { return d.dx !== -m.dir.dx || d.dy !== -m.dir.dy; });
+    }
+    if (!options.length) return;
+    var pick;
+    if (Math.random() < chaseChance()) {
+      pick = options.reduce(function (best, d) {
+        return playerDist[m.cy + d.dy][m.cx + d.dx] < playerDist[m.cy + best.dy][m.cx + best.dx] ? d : best;
+      });
+    } else {
+      pick = options[Math.floor(Math.random() * options.length)];
+    }
+    go(m, pick);
+  }
+
+  function setWant(d) {
+    want = d;
+    // 逆向きはマスの途中でもすぐ折り返せる
+    if (player && player.moving && d.dx === -player.dir.dx && d.dy === -player.dir.dy) {
+      var cx = player.cx, cy = player.cy;
+      player.cx = player.tx; player.cy = player.ty;
+      player.tx = cx; player.ty = cy;
+      player.t = 1 - player.t;
+      player.dir = d;
+      player.face = d;
+    }
+  }
+
+  function throwBeans() {
+    if (!state.playing || state.readyT > 0 || state.ammo <= 0) return;
+    state.ammo--;
+    ammoEl.textContent = state.ammo;
+    var d = player.face;
+    throws.push({ x: posX(player), y: posY(player), dx: d.dx, dy: d.dy });
+    playTone('triangle', 900, 500, 0.15, 0.1);
+  }
+
+  function resetPositions() {
+    player = makeMover(START.x, START.y, PLAYER_SPEED);
+    player.invT = INVINCIBLE_TIME;
+    want = null;
+    oni = holes.map(makeOni);
+    throws = [];
+    state.readyT = READY_TIME;
+  }
+
+  // ---- 進行 ----
+
+  function updateHud() {
+    scoreEl.textContent = state.score;
+    stageEl.textContent = state.stage;
+    livesEl.textContent = state.lives > 0 ? new Array(state.lives + 1).join('♥') : '-';
+    ammoEl.textContent = state.ammo;
+    highScoreEl.textContent = state.highScore;
+  }
+
+  function prepareStage() {
+    buildMaze();
+    placeHoles(Math.min(1 + state.stage, 4));
+    buildBeans();
+    oni = holes.map(makeOni);
+    player = makeMover(START.x, START.y, PLAYER_SPEED);
+    player.invT = 0;
+    throws = [];
+    want = null;
+  }
+
+  function startStage() {
+    ensureAudio();
+    prepareStage();
+    state.ammo = AMMO;
+    state.readyT = READY_TIME;
+    updateHud();
+    overlay.hidden = true;
+    state.playing = true;
+    lastTs = performance.now();
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function startGame() {
+    state.stage = 1;
+    state.score = 0;
+    state.lives = LIVES;
+    startStage();
+  }
+
+  function nextStage() {
+    state.stage += 1;
+    startStage();
+  }
+
+  function stopLoop() {
+    state.playing = false;
+    cancelAnimationFrame(rafId);
+    render();
+  }
+
+  function clearStage() {
+    stopLoop();
+    state.score += CLEAR_SCORE;
+    updateHud();
+    overlayTitle.textContent = 'ステージ' + state.stage + ' クリア!';
+    overlayMsg.innerHTML = 'スコア: <span class="result-score">' + state.score + '</span><br>次は鬼がもっと手ごわいよ!';
+    actionBtn.textContent = '次のステージへ';
+    nextAction = nextStage;
+    overlay.hidden = false;
+    playTone('sine', 660, 1320, 0.4, 0.15);
+  }
+
+  function gameOver() {
+    stopLoop();
+    var isRecord = state.score > state.highScore;
+    if (isRecord) {
+      state.highScore = state.score;
+      saveHigh(state.highScore);
+    }
+    updateHud();
+    overlayTitle.textContent = 'ゲームオーバー!';
+    overlayMsg.innerHTML = 'ステージ' + state.stage + ' / スコア: <span class="result-score">' + state.score + '</span>' +
+      (isRecord ? '<br><span class="new-record">🎉 ハイスコア更新!</span>' : '<br>ハイスコア: ' + state.highScore);
+    actionBtn.textContent = 'もう一度あそぶ';
+    nextAction = startGame;
+    overlay.hidden = false;
+  }
+
+  function caught() {
+    state.lives--;
+    updateHud();
+    playTone('sawtooth', 400, 80, 0.5, 0.15);
+    if (state.lives <= 0) { gameOver(); return true; }
+    resetPositions();
+    return false;
+  }
+
+  function updateThrows(dt) {
+    for (var i = throws.length - 1; i >= 0; i--) {
+      var b = throws[i];
+      b.x += b.dx * THROW_SPEED * dt;
+      b.y += b.dy * THROW_SPEED * dt;
+      if (!isOpen(Math.round(b.x), Math.round(b.y))) { throws.splice(i, 1); continue; }
+      for (var j = 0; j < oni.length; j++) {
+        var o = oni[j];
+        if (o.stunT > 0) continue;
+        if (Math.hypot(posX(o) - b.x, posY(o) - b.y) < THROW_HIT_RADIUS) {
+          o.stunT = STUN_TIME;
+          state.score += STUN_SCORE;
+          scoreEl.textContent = state.score;
+          playTone('square', 700, 300, 0.25, 0.1);
+        }
+      }
+    }
+  }
+
+  function tick(ts) {
+    var dt = Math.min((ts - lastTs) / 1000, 0.05);
+    lastTs = ts;
+
+    if (state.readyT > 0) {
+      state.readyT -= dt;
+    } else {
+      player.invT = Math.max(0, player.invT - dt);
+      advance(player, player.speed * dt, decidePlayer, eatBean);
+      playerDist = bfsFrom(player.t < 0.5 ? player.cx : player.tx, player.t < 0.5 ? player.cy : player.ty);
+      oni.forEach(function (o) {
+        if (o.stunT > 0) { o.stunT = Math.max(0, o.stunT - dt); return; }
+        advance(o, o.speed * dt, decideOni);
+      });
+      updateThrows(dt);
+
+      if (state.beansLeft <= 0) { clearStage(); return; }
+      if (player.invT <= 0) {
+        var px = posX(player), py = posY(player);
+        var hit = oni.some(function (o) {
+          return o.stunT <= 0 && Math.hypot(posX(o) - px, posY(o) - py) < 0.65;
+        });
+        if (hit && caught()) return;
+      }
+    }
+
+    render();
+    rafId = requestAnimationFrame(tick);
+  }
+
+  // ---- 描画 ----
+
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function drawMaze() {
+    ctx.fillStyle = colors.grass;
+    ctx.fillRect(0, 0, W, H);
+    // 生け垣:となりの壁とつながって見えるよう少しはみ出して描く
+    ctx.fillStyle = colors['grass-deep'];
+    for (var y = 0; y < ROWS; y++) {
+      for (var x = 0; x < COLS; x++) {
+        if (grid[y][x] !== 1) continue;
+        roundRect(x * T + 2, y * T + 2, T - 4, T - 4, 8);
+        ctx.fill();
+        if (x + 1 < COLS && grid[y][x + 1] === 1) ctx.fillRect(x * T + T / 2, y * T + 2, T, T - 4);
+        if (y + 1 < ROWS && grid[y + 1][x] === 1) ctx.fillRect(x * T + 2, y * T + T / 2, T - 4, T);
+      }
+    }
+
+    holes.forEach(function (h) {
+      ctx.fillStyle = colors['dirt-rim'];
+      ctx.beginPath();
+      ctx.ellipse((h.x + 0.5) * T, (h.y + 0.7) * T, T * 0.42, T * 0.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = colors['dirt-deep'];
+      ctx.beginPath();
+      ctx.ellipse((h.x + 0.5) * T, (h.y + 0.7) * T, T * 0.32, T * 0.13, 0, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    ctx.fillStyle = '#F2DFA7';
+    ctx.strokeStyle = colors.dirt;
+    ctx.lineWidth = 1.2;
+    for (y = 0; y < ROWS; y++) {
+      for (x = 0; x < COLS; x++) {
+        if (!beans[y] || !beans[y][x]) continue;
+        ctx.beginPath();
+        ctx.ellipse((x + 0.5) * T, (y + 0.5) * T, 4.2, 3.4, 0.4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+  }
+
+  function drawImageAt(img, cx, cy, w, flip) {
+    if (!img.complete || !img.naturalWidth) return;
+    var h = w * MOLE_ASPECT;
+    ctx.save();
+    ctx.translate(cx, cy);
+    if (flip) ctx.scale(-1, 1);
+    ctx.drawImage(img, -w / 2, -h / 2, w, h);
+    ctx.restore();
+  }
+
+  function drawOni(o) {
+    var cx = (posX(o) + 0.5) * T, cy = (posY(o) + 0.5) * T;
+    var w = T * 1.25;
+    ctx.globalAlpha = o.stunT > 0 ? 0.55 : 1;
+    drawImageAt(images.oni, cx, cy, w, false);
+    ctx.globalAlpha = 1;
+
+    // 豆が当たった鬼の頭の上でピンクのハートが回る
+    if (o.stunT > 0) {
+      var a = performance.now() / 300;
+      ctx.fillStyle = '#FF6FA8';
+      ctx.font = '800 14px "Baloo 2", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      for (var k = 0; k < 3; k++) {
+        var ang = a + k * Math.PI * 2 / 3;
+        ctx.fillText('♥', cx + Math.cos(ang) * w * 0.4, cy - w * 0.45 + Math.sin(ang) * w * 0.12);
+      }
+    }
+  }
+
+  function drawPlayer() {
+    // 無敵中は点滅させる
+    if (player.invT > 0 && Math.floor(player.invT * 10) % 2 === 0) return;
+    drawImageAt(images.player, (posX(player) + 0.5) * T, (posY(player) + 0.5) * T, T * 1.3, player.face === DIRS.left);
+  }
+
+  function render() {
+    if (!colors.ink) return;
+    if (!grid.length) prepareStage();
+    drawMaze();
+    oni.forEach(drawOni);
+    drawPlayer();
+
+    ctx.fillStyle = '#F2DFA7';
+    throws.forEach(function (b) {
+      for (var k = 0; k < 3; k++) {
+        ctx.beginPath();
+        ctx.arc((b.x + 0.5) * T + (k - 1) * 5 * b.dy, (b.y + 0.5) * T + (k - 1) * 5 * b.dx, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    });
+
+    if (state.playing && state.readyT > 0) {
+      ctx.fillStyle = colors.accent;
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 5;
+      ctx.font = '800 48px "Baloo 2", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.strokeText('READY!', W / 2, H / 2);
+      ctx.fillText('READY!', W / 2, H / 2);
+    }
+  }
+
+  // ---- 入力 ----
+
+  actionBtn.addEventListener('click', function () { nextAction(); });
+  document.getElementById('throwBtn').addEventListener('click', throwBeans);
+  [['upBtn', DIRS.up], ['downBtn', DIRS.down], ['leftBtn', DIRS.left], ['rightBtn', DIRS.right]].forEach(function (p) {
+    document.getElementById(p[0]).addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      setWant(p[1]);
+    });
+  });
+
+  var KEYS = {
+    ArrowUp: DIRS.up, KeyW: DIRS.up, ArrowDown: DIRS.down, KeyS: DIRS.down,
+    ArrowLeft: DIRS.left, KeyA: DIRS.left, ArrowRight: DIRS.right, KeyD: DIRS.right
+  };
+  window.addEventListener('keydown', function (e) {
+    if (!state.playing) return;
+    if (KEYS[e.code]) { e.preventDefault(); setWant(KEYS[e.code]); }
+    else if (e.code === 'Space') { e.preventDefault(); throwBeans(); }
+  });
+
+  // スワイプした向きに進む
+  var swipe = null;
+  canvas.addEventListener('pointerdown', function (e) {
+    swipe = { x: e.clientX, y: e.clientY };
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+  });
+  canvas.addEventListener('pointermove', function (e) {
+    if (!swipe) return;
+    var dx = e.clientX - swipe.x, dy = e.clientY - swipe.y;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 18) return;
+    setWant(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? DIRS.right : DIRS.left) : (dy > 0 ? DIRS.down : DIRS.up));
+    swipe = { x: e.clientX, y: e.clientY };
+  });
+  ['pointerup', 'pointercancel'].forEach(function (type) {
+    canvas.addEventListener(type, function () { swipe = null; });
+  });
+
+  try {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+      readColors();
+      render();
+    });
+  } catch (e) {}
+
+  function boot(data) {
+    state.highScore = (data && typeof data.highScore === 'number') ? data.highScore : loadHigh();
+    readColors();
+    setupCanvas();
+    prepareStage();
+    updateHud();
+    render();
+  }
+
+  try {
+    if (window.claude && window.claude.hot && window.claude.hot.snapshot) {
+      window.claude.hot.snapshot(function () { return { highScore: state.highScore }; });
+    }
+    if (window.claude && window.claude.hot && window.claude.hot.ready) {
+      window.claude.hot.ready(boot);
+    } else {
+      boot(window.claude && window.claude.hot ? window.claude.hot.data : null);
+    }
+  } catch (e) {
+    boot(null);
+  }
+})();
+</script>
+</body>
+</html>
