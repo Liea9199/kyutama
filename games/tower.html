@@ -49,13 +49,13 @@
     <div class="overlay" id="overlay">
       <div class="overlay-card">
         <h2 id="overlayTitle">準備はいい?</h2>
-        <p id="overlayMsg">雲に乗った玖球と豹球をタップで落として、ソフトクリームの上に積み上げよう!<br>ずれすぎるとタワーがくずれるよ。<br>まん中にぴったり置くとボーナス!</p>
+        <p id="overlayMsg">雲に乗った玖球と豹球をタップで落として、ソフトクリームの上に積み上げよう!<br>ずれすぎるとタワーがくずれるよ。<br>まん中にぴったり置くとボーナス!<br>玖球の上に玖球を乗せると💣ばくだんに!</p>
         <button class="btn" id="actionBtn">スタート</button>
       </div>
     </div>
   </div>
 
-  <p class="hint">画面タップ(またはスペースキー)で落とす。気むずかしい玖球はずれて置かれると怒ってはねるので、特にていねいに!</p>
+  <p class="hint">画面タップ(またはスペースキー)で落とす。気むずかしい玖球はずれて置かれると怒ってはねるので、特にていねいに!玖球が2段続くと3秒後に爆発して、玖球2段とその下2段が吹き飛ぶうえにポイントも減るよ。爆発までの間は、ずらして落としてお客様を捨ててもOK!</p>
 </div>
 
 <script src="mole-icon.js"></script>
@@ -80,6 +80,11 @@
   var GRAVITY = 1800;
   var PERFECT_PX = 5;
   var NEXT_DELAY = 0.35;
+  // 玖球の上に玖球が乗ると、上の玖球がばくだんになる。BOMB_TIME秒後に、玖球2段とその下BOMB_RANGE段を
+  // (カウント中に上へ積んだ段もいっしょに)吹き飛ばす
+  var BOMB_TIME = 3;
+  var BOMB_RANGE = 2;
+  var BOMB_PENALTY = 30;
 
   // 玖球は気むずかしく、ずれて置くと怒ってはねて位置がさらにずれる。豹球はおだやかでそのまま乗る
   var KINDS = {
@@ -106,6 +111,7 @@
   var nextKind = null;
   var debris = [];
   var popups = [];
+  var blasts = [];
   var camY = 0;
   var rafId = null;
   var lastTs = 0;
@@ -118,6 +124,23 @@
     img.addEventListener('load', function () { if (!state.playing) render(); });
     KINDS[k].img = img;
   });
+
+  // 赤く点滅させるために、キャラの形だけを赤くぬった画像を作っておく
+  function redImage(kind) {
+    var k = KINDS[kind];
+    if (k.red) return k.red;
+    if (!k.img.complete || !k.img.naturalWidth) return null;
+    var c = document.createElement('canvas');
+    c.width = k.img.naturalWidth;
+    c.height = k.img.naturalHeight;
+    var g = c.getContext('2d');
+    g.drawImage(k.img, 0, 0);
+    g.globalCompositeOperation = 'source-atop';
+    g.fillStyle = '#FF2A1F';
+    g.fillRect(0, 0, c.width, c.height);
+    k.red = c;
+    return c;
+  }
 
   function loadHigh() {
     try {
@@ -222,12 +245,45 @@
       }
       state.score += 10;
     }
-    stack.push({ kind: p.kind, x: p.x, bottom: y, bounce: angry ? 1 : 0.4 });
+    var piece = { kind: p.kind, x: p.x, bottom: y, bounce: angry ? 1 : 0.4 };
+    var onMole = stack.length > 0 && stack[stack.length - 1].kind === 'mole';
+    stack.push(piece);
 
     if (!checkStability()) {
+      if (p.kind === 'mole' && onMole) {
+        piece.bomb = BOMB_TIME;
+        piece.blink = 0;
+        popup('💣 ばくだん!', p.x, y - PIECE_H * 1.4, '#E8483F', true);
+        playTone('square', 700, 900, 0.18, 0.08);
+      }
       updateHud();
       state.nextT = NEXT_DELAY;
     }
+  }
+
+  function explode(bomb) {
+    var i = stack.indexOf(bomb);
+    if (i < 0) return;
+    var blown = stack.splice(Math.max(0, i - 1 - BOMB_RANGE));
+    var cy = bomb.bottom - PIECE_H * 0.5;
+    blown.forEach(function (p) {
+      var dir = Math.sign(p.x - bomb.x) || (Math.random() < 0.5 ? -1 : 1);
+      debris.push({
+        kind: p.kind, x: p.x, bottom: p.bottom,
+        vx: dir * (220 + Math.random() * 200), vy: -380 - Math.random() * 260,
+        rot: 0, vr: dir * (6 + Math.random() * 6)
+      });
+    });
+    var loss = Math.min(state.score, blown.length * BOMB_PENALTY);
+    state.score -= loss;
+    state.combo = 0;
+    blasts.push({ x: bomb.x, y: cy, t: 0 });
+    popup('ドカーン!', bomb.x, cy - 40, '#E8483F', true);
+    if (loss) popup('-' + loss, bomb.x, cy, '#E8483F', true);
+    playTone('sawtooth', 160, 40, 0.7, 0.2);
+    playTone('square', 90, 30, 0.5, 0.12);
+    updateHud();
+    checkStability();
   }
 
   // 下の段から順に、上に乗っている全員の重心が足場からはみ出していないか調べる
@@ -247,6 +303,8 @@
   }
 
   function collapse(from, dir) {
+    // ばくだんの上に積んだ段も爆発で吹き飛ぶので、ばくだんより上だけが落ちたときは「捨てた」扱いでライフは減らない
+    var discard = stack.slice(0, from).some(function (p) { return p.bomb !== undefined; });
     var fallen = stack.splice(from);
     fallen.forEach(function (p, k) {
       debris.push({
@@ -255,12 +313,22 @@
         rot: 0, vr: dir * (3 + Math.random() * 3)
       });
     });
+    if (discard) {
+      popup('ポイッ!', W / 2, topSurface() - PIECE_H, colors.ink, true);
+      playTone('triangle', 520, 260, 0.2, 0.1);
+      updateHud();
+      state.nextT = NEXT_DELAY;
+      return;
+    }
     state.combo = 0;
     state.lives -= 1;
     popup(fallen.length > 1 ? 'ガラガラ〜!' : 'おっとっと!', W / 2, topSurface() - PIECE_H, '#E8483F', true);
     playTone('sawtooth', 300, 70, 0.6, 0.15);
     updateHud();
     if (state.lives <= 0) {
+      // 爆発でくずれたときは雲や落下中のお客様が残っているので片づける
+      hanging = null;
+      falling = null;
       state.nextT = 1.2;
     } else {
       state.nextT = NEXT_DELAY + 0.4;
@@ -283,6 +351,7 @@
     stack = [];
     debris = [];
     popups = [];
+    blasts = [];
     falling = null;
     nextKind = null;
     camY = 0;
@@ -335,6 +404,14 @@
     }
 
     stack.forEach(function (p) { p.bounce = Math.max(0, p.bounce - dt * 3); });
+    // 残り時間が減るほど点滅が速くなる
+    stack.filter(function (p) { return p.bomb !== undefined; }).forEach(function (p) {
+      p.bomb -= dt;
+      p.blink += dt * Math.PI * 2 * (2 + (BOMB_TIME - p.bomb) * 3);
+      if (p.bomb <= 0) explode(p);
+    });
+    blasts.forEach(function (b) { b.t += dt; });
+    blasts = blasts.filter(function (b) { return b.t < 0.6; });
     debris.forEach(function (d) {
       d.vy += GRAVITY * dt;
       d.x += d.vx * dt;
@@ -420,7 +497,7 @@
     });
   }
 
-  function drawPiece(kind, x, bottom, rot, squash) {
+  function drawPiece(kind, x, bottom, rot, squash, red) {
     var img = KINDS[kind].img;
     if (!img.complete || !img.naturalWidth) return;
     var w = PIECE_W * (1 + squash * 0.12), h = PIECE_H * (1 - squash * 0.12);
@@ -428,7 +505,38 @@
     ctx.translate(x, bottom - camY);
     if (rot) ctx.rotate(rot);
     ctx.drawImage(img, -w / 2, -h, w, h);
+    var redImg = red ? redImage(kind) : null;
+    if (redImg) {
+      ctx.globalAlpha = red;
+      ctx.drawImage(redImg, -w / 2, -h, w, h);
+    }
     ctx.restore();
+  }
+
+  function drawBombTimer(p, x) {
+    var y = p.bottom - PIECE_H * 0.55 - camY;
+    ctx.fillStyle = 'rgba(232, 72, 63, .9)';
+    ctx.beginPath();
+    ctx.arc(x, y, 15, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = '800 18px "Baloo 2", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(Math.max(1, Math.ceil(p.bomb))), x, y + 1);
+  }
+
+  function drawBlast(b) {
+    var k = b.t / 0.6;
+    var r = 30 + k * 140;
+    var g = ctx.createRadialGradient(b.x, b.y - camY, 0, b.x, b.y - camY, r);
+    g.addColorStop(0, 'rgba(255, 250, 200, ' + (1 - k) + ')');
+    g.addColorStop(0.4, 'rgba(255, 160, 40, ' + (0.9 * (1 - k)) + ')');
+    g.addColorStop(1, 'rgba(232, 72, 63, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y - camY, r, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   function render() {
@@ -440,10 +548,16 @@
     var sway = Math.sin(state.time * 2.4) * Math.min(stack.length * 0.35, 6);
     stack.forEach(function (p, i) {
       var lean = stack.length > 1 ? sway * i / (stack.length - 1) : 0;
-      drawPiece(p.kind, p.x + lean, p.bottom, 0, Math.sin(p.bounce * Math.PI) * p.bounce);
+      var red = p.bomb !== undefined ? 0.45 + 0.4 * Math.sin(p.blink) : 0;
+      drawPiece(p.kind, p.x + lean, p.bottom, 0, Math.sin(p.bounce * Math.PI) * p.bounce, red);
+    });
+    stack.forEach(function (p, i) {
+      if (p.bomb === undefined) return;
+      drawBombTimer(p, p.x + (stack.length > 1 ? sway * i / (stack.length - 1) : 0));
     });
     if (falling) drawPiece(falling.kind, falling.x, falling.bottom, 0, 0);
     debris.forEach(function (d) { drawPiece(d.kind, d.x, d.bottom, d.rot, 0); });
+    blasts.forEach(drawBlast);
 
     if (hanging) {
       var hx = hangX();
