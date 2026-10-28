@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>ブラッシングサロン</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Nunito:wght@400;600;700;800&display=swap">
+<link rel="stylesheet" href="../style.css">
+<style>
+  .brush-wrap { position: relative; width: 100%; max-width: 420px; }
+
+  .brush-canvas {
+    position: relative; z-index: 1;
+    display: block;
+    width: 100%; height: auto;
+    aspect-ratio: 400 / 480;
+    border-radius: 18px;
+    box-shadow: 0 8px 18px var(--shadow);
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: crosshair;
+  }
+</style>
+</head>
+<body>
+
+<div class="scene">
+  <div class="sky-deco" aria-hidden="true">
+    <div class="orb"></div>
+    <div class="stars"></div>
+  </div>
+
+  <a class="back-link" href="../index.html">← ミニゲーム一覧</a>
+
+  <header class="hud">
+    <h1>ブラッシングサロン</h1>
+    <p class="tagline">お客様の毛並みをやさしく整えて、チップをもらおう!</p>
+    <div class="stats">
+      <div class="stat"><span class="stat-label">チップ</span><span class="stat-value" id="score">0</span></div>
+      <div class="stat"><span class="stat-label">お客様</span><span class="stat-value" id="served">0</span></div>
+      <div class="stat"><span class="stat-label">残り</span><span class="stat-value" id="lives">♥♥♥</span></div>
+      <div class="stat"><span class="stat-label">ハイスコア</span><span class="stat-value" id="highScore">0</span></div>
+    </div>
+  </header>
+
+  <div class="brush-wrap">
+    <canvas class="brush-canvas" id="canvas" aria-label="ブラッシングサロンのゲーム画面"></canvas>
+    <div class="overlay" id="overlay">
+      <div class="overlay-card">
+        <h2 id="overlayTitle">開店の準備はいい?</h2>
+        <p id="overlayMsg">お客様をなぞってブラッシングしよう。<br>毛玉をぜんぶほどいて、きれい度を100%にすれば完了!<br>上から下へ、ゆっくりが基本。<br>玖球さまは怒りっぽいので要注意!</p>
+        <button class="btn" id="actionBtn">開店する</button>
+      </div>
+    </div>
+  </div>
+
+  <p class="hint">画面をなぞってブラッシング。下から上へ逆なでしたり、速くこすりすぎたりすると、ごきげんが下がるよ。ごきげんが0になるとお客様が帰っちゃう!</p>
+</div>
+
+<script src="mole-icon.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var HIGH_KEY = 'kyutama-brush-highscore';
+  // 画面はこの論理サイズで描き、表示サイズに合わせて拡大縮小する
+  var W = 400, H = 480;
+  var LIVES = 3;
+  var IMG_W = 280;
+  var IMG_H = IMG_W * 592 / 624;
+  var CENTER = { x: W / 2, y: 268 };
+  var BODY_RX = IMG_W * 0.36, BODY_RY = IMG_H * 0.36;
+  var BRUSH_R = 26;
+  var TANGLE_HP = 140;
+  var CLEAN_PER_PX = 0.06;
+  var ARRIVE_TIME = 0.6;
+
+  // against: 逆なで1pxごとの怒り、rough: 速すぎるとき1pxごとの怒り、
+  // calm: 上手になでた1pxごとに怒りが引く量、impatience: 待たせると1秒ごとに増える怒り
+  var KINDS = {
+    mole: {
+      name: '玖球さま', trait: '気むずかしい', file: 'mole.png',
+      speedLimit: 900, against: 0.12, rough: 0.08, calm: 0.006, impatience: 2.2,
+      tangles: [5, 7], tip: 300, tangleColor: '#6E5AA8'
+    },
+    leopard: {
+      name: '豹球さま', trait: 'おだやか', file: 'leopard.png',
+      speedLimit: 1700, against: 0.03, rough: 0.015, calm: 0.02, impatience: 0.5,
+      tangles: [3, 4], tip: 150, tangleColor: '#A8742A'
+    }
+  };
+
+  var canvas = document.getElementById('canvas');
+  var ctx = canvas.getContext('2d');
+  var scoreEl = document.getElementById('score');
+  var servedEl = document.getElementById('served');
+  var livesEl = document.getElementById('lives');
+  var highScoreEl = document.getElementById('highScore');
+  var overlay = document.getElementById('overlay');
+  var overlayTitle = document.getElementById('overlayTitle');
+  var overlayMsg = document.getElementById('overlayMsg');
+  var actionBtn = document.getElementById('actionBtn');
+
+  var state = { playing: false, score: 0, served: 0, lives: LIVES, highScore: 0, time: 0 };
+  // phase: 'arrive'(入店中)→'brush'→'leave'(退店中)
+  var guest = null;
+  var brush = { down: false, x: 0, y: 0, lastT: 0 };
+  var popups = [];
+  var rafId = null;
+  var lastTs = 0;
+  var audioCtx = null;
+  var colors = {};
+
+  Object.keys(KINDS).forEach(function (k) {
+    var img = new Image();
+    img.src = new URL(KINDS[k].file, MOLE_PNG_BASE).href;
+    img.addEventListener('load', function () { if (!state.playing) render(); });
+    KINDS[k].img = img;
+  });
+
+  function loadHigh() {
+    try {
+      var v = parseInt(localStorage.getItem(HIGH_KEY), 10);
+      return isNaN(v) ? 0 : v;
+    } catch (e) { return 0; }
+  }
+  function saveHigh(v) {
+    try { localStorage.setItem(HIGH_KEY, String(v)); } catch (e) {}
+  }
+
+  function readColors() {
+    var cs = getComputedStyle(document.documentElement);
+    ['card-bg', 'stat-bg', 'dirt', 'dirt-rim', 'ink', 'ink-soft', 'accent'].forEach(function (name) {
+      colors[name] = cs.getPropertyValue('--' + name).trim();
+    });
+  }
+
+  function setupCanvas() {
+    var dpr = Math.min(window.devicePixelRatio || 1, 3);
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function ensureAudio() {
+    if (!audioCtx) {
+      try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+    } else if (audioCtx.state === 'suspended') {
+      try { audioCtx.resume(); } catch (e) {}
+    }
+  }
+
+  function playTone(type, from, to, dur, vol) {
+    if (!audioCtx) return;
+    try {
+      var t = audioCtx.currentTime;
+      var osc = audioCtx.createOscillator();
+      var gain = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(from, t);
+      osc.frequency.exponentialRampToValueAtTime(to, t + dur);
+      gain.gain.setValueAtTime(vol, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + dur + 0.02);
+    } catch (e) {}
+  }
+
+  function inBody(x, y) {
+    var dx = (x - CENTER.x) / BODY_RX, dy = (y - CENTER.y) / BODY_RY;
+    return dx * dx + dy * dy <= 1;
+  }
+
+  function randomBodyPoint(margin) {
+    for (var i = 0; i < 100; i++) {
+      var x = CENTER.x + (Math.random() * 2 - 1) * BODY_RX;
+      var y = CENTER.y + (Math.random() * 2 - 1) * BODY_RY;
+      var dx = (x - CENTER.x) / (BODY_RX - margin), dy = (y - CENTER.y) / (BODY_RY - margin);
+      if (dx * dx + dy * dy <= 1) return { x: x, y: y };
+    }
+    return { x: CENTER.x, y: CENTER.y };
+  }
+
+  // ---- お客様 ----
+
+  function newGuest() {
+    // 慣れてきたら気むずかしい玖球さまが増える
+    var moleChance = Math.min(0.4 + state.served * 0.04, 0.7);
+    var kind = KINDS[Math.random() < moleChance ? 'mole' : 'leopard'];
+    var count = kind.tangles[0] + Math.floor(Math.random() * (kind.tangles[1] - kind.tangles[0] + 1));
+    var tangles = [];
+    for (var n = 0; n < count; n++) {
+      for (var tries = 0; tries < 40; tries++) {
+        var p = randomBodyPoint(18);
+        var spaced = tangles.every(function (t) { return Math.hypot(t.x - p.x, t.y - p.y) > 40; });
+        if (spaced || tries === 39) { tangles.push({ x: p.x, y: p.y, hp: TANGLE_HP, seed: Math.random() * 6 }); break; }
+      }
+    }
+    var dust = [];
+    for (n = 0; n < 26; n++) dust.push(randomBodyPoint(6));
+    guest = { kind: kind, tangles: tangles, dust: dust, clean: 0, anger: 0, phase: 'arrive', phaseT: 0, happy: false, heartDist: 0, angryCool: 0 };
+  }
+
+  function guestDone() {
+    return guest.clean >= 100 && guest.tangles.length === 0;
+  }
+
+  function sendOff(happy) {
+    guest.phase = 'leave';
+    guest.phaseT = 0;
+    guest.happy = happy;
+    brush.down = false;
+    if (happy) {
+      // ごきげんが残っているほどチップが多い
+      var tip = Math.round(guest.kind.tip * (1 - guest.anger / 150) / 10) * 10;
+      state.score += tip;
+      state.served += 1;
+      popups.push({ text: 'チップ +' + tip, x: CENTER.x, y: CENTER.y - IMG_H / 2, color: colors.accent, t: 0, big: true });
+      playTone('sine', 660, 1320, 0.35, 0.15);
+    } else {
+      state.lives -= 1;
+      popups.push({ text: 'プンプン!', x: CENTER.x, y: CENTER.y - IMG_H / 2, color: '#E8483F', t: 0, big: true });
+      playTone('sawtooth', 300, 90, 0.5, 0.15);
+    }
+    updateHud();
+  }
+
+  // ---- ブラッシング ----
+
+  function stroke(x0, y0, x1, y1, dt) {
+    if (!guest || guest.phase !== 'brush') return;
+    var dx = x1 - x0, dy = y1 - y0;
+    var len = Math.hypot(dx, dy);
+    if (len < 0.5 || !inBody(x1, y1)) return;
+    var kind = guest.kind;
+    var speed = len / Math.max(dt, 0.008);
+
+    if (dy < -Math.abs(dx) * 0.5) {
+      // 下から上への逆なで
+      guest.anger += len * kind.against;
+      angryPopup(x1, y1, '逆なで!');
+    } else if (speed > kind.speedLimit) {
+      guest.anger += len * kind.rough;
+      angryPopup(x1, y1, 'いたい!');
+    } else {
+      guest.anger = Math.max(0, guest.anger - len * kind.calm);
+      guest.clean = Math.min(100, guest.clean + len * CLEAN_PER_PX);
+      for (var i = guest.tangles.length - 1; i >= 0; i--) {
+        var t = guest.tangles[i];
+        if (Math.hypot(t.x - x1, t.y - y1) > BRUSH_R + 6) continue;
+        t.hp -= len;
+        if (t.hp <= 0) {
+          guest.tangles.splice(i, 1);
+          popups.push({ text: 'ほどけた!', x: t.x, y: t.y, color: colors.accent, t: 0 });
+          playTone('triangle', 700, 1100, 0.12, 0.1);
+        }
+      }
+      guest.heartDist += len;
+      if (guest.heartDist > 180) {
+        guest.heartDist = 0;
+        popups.push({ text: '♥', x: x1 + (Math.random() * 30 - 15), y: y1 - 10, color: '#FF6FA8', t: 0 });
+        playTone('sine', 520 + Math.random() * 200, 700, 0.06, 0.04);
+      }
+    }
+    guest.anger = Math.min(100, guest.anger);
+    if (guest.anger >= 100) sendOff(false);
+    else if (guestDone()) sendOff(true);
+  }
+
+  function angryPopup(x, y, text) {
+    if (guest.angryCool > 0) return;
+    guest.angryCool = 0.5;
+    popups.push({ text: '💢 ' + text, x: x, y: y - 14, color: '#E8483F', t: 0 });
+    playTone('square', 220, 160, 0.12, 0.08);
+  }
+
+  // ---- 進行 ----
+
+  function updateHud() {
+    scoreEl.textContent = state.score;
+    servedEl.textContent = state.served;
+    livesEl.textContent = state.lives > 0 ? new Array(state.lives + 1).join('♥') : '-';
+    highScoreEl.textContent = state.highScore;
+  }
+
+  function startGame() {
+    ensureAudio();
+    state.score = 0;
+    state.served = 0;
+    state.lives = LIVES;
+    state.time = 0;
+    popups = [];
+    newGuest();
+    updateHud();
+    overlay.hidden = true;
+    state.playing = true;
+    lastTs = performance.now();
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function endGame() {
+    state.playing = false;
+    cancelAnimationFrame(rafId);
+    render();
+    var isRecord = state.score > state.highScore;
+    if (isRecord) {
+      state.highScore = state.score;
+      saveHigh(state.highScore);
+    }
+    updateHud();
+    overlayTitle.textContent = '閉店です!';
+    overlayMsg.innerHTML = 'お客様 ' + state.served + '人 / チップ: <span class="result-score">' + state.score + '</span>' +
+      (isRecord ? '<br><span class="new-record">🎉 ハイスコア更新!</span>' : '<br>ハイスコア: ' + state.highScore);
+    actionBtn.textContent = 'もう一度開店する';
+    overlay.hidden = false;
+  }
+
+  function tick(ts) {
+    var dt = Math.min((ts - lastTs) / 1000, 0.05);
+    lastTs = ts;
+    state.time += dt;
+
+    guest.phaseT += dt;
+    guest.angryCool = Math.max(0, guest.angryCool - dt);
+    if (guest.phase === 'arrive' && guest.phaseT >= ARRIVE_TIME) {
+      guest.phase = 'brush';
+      guest.phaseT = 0;
+    } else if (guest.phase === 'brush') {
+      // 待たせるとだんだん機嫌が悪くなる
+      guest.anger = Math.min(100, guest.anger + guest.kind.impatience * dt);
+      if (guest.anger >= 100) sendOff(false);
+    } else if (guest.phase === 'leave' && guest.phaseT >= ARRIVE_TIME) {
+      if (state.lives <= 0) { endGame(); return; }
+      newGuest();
+    }
+
+    popups.forEach(function (p) { p.t += dt; });
+    popups = popups.filter(function (p) { return p.t < 1; });
+
+    render();
+    rafId = requestAnimationFrame(tick);
+  }
+
+  // ---- 描画 ----
+
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function guestOffsetX() {
+    if (!guest) return 0;
+    var p = Math.min(guest.phaseT / ARRIVE_TIME, 1);
+    var ease = 1 - Math.pow(1 - p, 3);
+    if (guest.phase === 'arrive') return (1 - ease) * W;
+    if (guest.phase === 'leave') return guest.happy ? -ease * W : ease * W;
+    // 怒りが強いと体がふるえる
+    if (guest.anger > 70) return Math.sin(state.time * 40) * (guest.anger - 70) / 10;
+    return 0;
+  }
+
+  function drawRoom() {
+    ctx.fillStyle = colors['card-bg'];
+    ctx.fillRect(0, 0, W, H);
+    // 壁のしま模様と床
+    ctx.fillStyle = colors['stat-bg'];
+    for (var x = 0; x < W; x += 40) ctx.fillRect(x, 0, 20, H - 90);
+    ctx.fillStyle = colors['dirt-rim'];
+    ctx.fillRect(0, H - 90, W, 90);
+    ctx.fillStyle = colors.dirt;
+    ctx.fillRect(0, H - 90, W, 6);
+    // お客様が乗る丸いクッション
+    ctx.fillStyle = '#F4A9C0';
+    ctx.beginPath();
+    ctx.ellipse(CENTER.x, H - 74, 150, 26, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawGauge(label, value, x, y, w, color) {
+    ctx.fillStyle = colors.ink;
+    ctx.font = '800 13px "Nunito", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, x, y);
+    var bx = x + 74;
+    ctx.fillStyle = 'rgba(0, 0, 0, .15)';
+    roundRect(bx, y - 7, w - 74, 14, 7);
+    ctx.fill();
+    if (value > 0) {
+      ctx.fillStyle = color;
+      roundRect(bx, y - 7, Math.max(14, (w - 74) * value / 100), 14, 7);
+      ctx.fill();
+    }
+  }
+
+  function drawTangle(t, color, ox) {
+    var r = 9 + 5 * (t.hp / TANGLE_HP);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.2;
+    ctx.lineCap = 'round';
+    for (var k = 0; k < 4; k++) {
+      ctx.beginPath();
+      ctx.arc(t.x + ox + Math.cos(t.seed + k * 1.7) * r * 0.35, t.y + Math.sin(t.seed + k * 2.3) * r * 0.35,
+        r * (0.45 + k * 0.12), t.seed + k, t.seed + k + 4.2);
+      ctx.stroke();
+    }
+  }
+
+  function moodFace(anger) {
+    if (anger >= 70) return '😠';
+    if (anger >= 40) return '😐';
+    return '😊';
+  }
+
+  function drawGuest() {
+    var ox = guestOffsetX();
+    var kind = guest.kind;
+    var img = kind.img;
+    if (img.complete && img.naturalWidth) {
+      ctx.drawImage(img, CENTER.x - IMG_W / 2 + ox, CENTER.y - IMG_H / 2, IMG_W, IMG_H);
+    }
+    // 汚れはきれい度に合わせて薄くなる
+    ctx.fillStyle = 'rgba(110, 90, 70, ' + (0.45 * (1 - guest.clean / 100)) + ')';
+    guest.dust.forEach(function (d) {
+      ctx.beginPath();
+      ctx.arc(d.x + ox, d.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    guest.tangles.forEach(function (t) { drawTangle(t, kind.tangleColor, ox); });
+
+    // 怒りに合わせて赤みをかける
+    if (guest.anger > 40) {
+      ctx.fillStyle = 'rgba(232, 72, 63, ' + ((guest.anger - 40) / 60 * 0.28) + ')';
+      ctx.beginPath();
+      ctx.ellipse(CENTER.x + ox, CENTER.y, BODY_RX * 1.05, BODY_RY * 1.05, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.font = '30px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(moodFace(guest.anger), CENTER.x + IMG_W * 0.42 + ox, CENTER.y - IMG_H * 0.42);
+  }
+
+  function drawBrush() {
+    if (!brush.down) return;
+    ctx.save();
+    ctx.translate(brush.x, brush.y);
+    ctx.rotate(-0.5);
+    ctx.fillStyle = '#C47A3A';
+    roundRect(-6, 8, 12, 46, 6);
+    ctx.fill();
+    ctx.fillStyle = '#E9A35E';
+    roundRect(-BRUSH_R, -12, BRUSH_R * 2, 22, 9);
+    ctx.fill();
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 2;
+    for (var k = -3; k <= 3; k++) {
+      ctx.beginPath();
+      ctx.moveTo(k * 6.5, -12);
+      ctx.lineTo(k * 6.5, -20);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function render() {
+    if (!colors.ink) return;
+    drawRoom();
+    if (!guest) newGuest();
+    drawGuest();
+
+    // お客様の名前とゲージ
+    var ox = guest.phase === 'brush' ? 0 : guestOffsetX();
+    ctx.fillStyle = colors.ink;
+    ctx.font = '800 18px "Baloo 2", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(guest.kind.name, 20 + ox, 26);
+    var nameW = ctx.measureText(guest.kind.name).width;
+    ctx.fillStyle = colors['ink-soft'];
+    ctx.font = '700 12px "Nunito", sans-serif';
+    ctx.fillText('(' + guest.kind.trait + ')', 20 + ox + nameW + 6, 27);
+    drawGauge('きれい度', guest.clean, 20, 56, W - 40, '#5DB8E8');
+    drawGauge('ごきげん', 100 - guest.anger, 20, 80, W - 40, guest.anger >= 70 ? '#E8483F' : guest.anger >= 40 ? '#F2B33D' : '#7CC66A');
+    ctx.fillStyle = colors['ink-soft'];
+    ctx.font = '700 12px "Nunito", sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText('毛玉 あと' + guest.tangles.length + 'こ  ↓ 上から下へ', W - 20, 104);
+
+    popups.forEach(function (p) {
+      ctx.globalAlpha = 1 - p.t;
+      ctx.fillStyle = p.color;
+      ctx.font = '800 ' + (p.big ? 26 : 16) + 'px "Baloo 2", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(p.text, p.x, p.y - p.t * 36);
+      ctx.globalAlpha = 1;
+    });
+
+    drawBrush();
+  }
+
+  // ---- 入力 ----
+
+  function toCanvas(e) {
+    var rect = canvas.getBoundingClientRect();
+    return { x: (e.clientX - rect.left) / rect.width * W, y: (e.clientY - rect.top) / rect.height * H };
+  }
+
+  canvas.addEventListener('pointerdown', function (e) {
+    if (!state.playing) return;
+    e.preventDefault();
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+    var p = toCanvas(e);
+    brush.down = true;
+    brush.x = p.x;
+    brush.y = p.y;
+    brush.lastT = performance.now();
+  });
+  canvas.addEventListener('pointermove', function (e) {
+    if (!brush.down) return;
+    var p = toCanvas(e);
+    var now = performance.now();
+    stroke(brush.x, brush.y, p.x, p.y, (now - brush.lastT) / 1000);
+    brush.x = p.x;
+    brush.y = p.y;
+    brush.lastT = now;
+  });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(function (type) {
+    canvas.addEventListener(type, function () { brush.down = false; });
+  });
+
+  actionBtn.addEventListener('click', startGame);
+
+  try {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+      readColors();
+      render();
+    });
+  } catch (e) {}
+
+  function boot(data) {
+    state.highScore = (data && typeof data.highScore === 'number') ? data.highScore : loadHigh();
+    readColors();
+    setupCanvas();
+    newGuest();
+    guest.phase = 'brush';
+    updateHud();
+    render();
+  }
+
+  try {
+    if (window.claude && window.claude.hot && window.claude.hot.snapshot) {
+      window.claude.hot.snapshot(function () { return { highScore: state.highScore }; });
+    }
+    if (window.claude && window.claude.hot && window.claude.hot.ready) {
+      window.claude.hot.ready(boot);
+    } else {
+      boot(window.claude && window.claude.hot ? window.claude.hot.data : null);
+    }
+  } catch (e) {
+    boot(null);
+  }
+})();
+</script>
+</body>
+</html>
