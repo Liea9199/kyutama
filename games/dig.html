@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>玖球の地底くだり</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Nunito:wght@400;600;700;800&display=swap">
+<link rel="stylesheet" href="../style.css">
+<style>
+  .dig-wrap { position: relative; width: 100%; max-width: 420px; }
+
+  .dig-canvas {
+    position: relative; z-index: 1;
+    display: block;
+    width: 100%; height: auto;
+    aspect-ratio: 400 / 600;
+    border-radius: 18px;
+    box-shadow: 0 8px 18px var(--shadow);
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+</style>
+</head>
+<body>
+
+<div class="scene">
+  <div class="sky-deco" aria-hidden="true">
+    <div class="orb"></div>
+    <div class="stars"></div>
+  </div>
+
+  <a class="back-link" href="../index.html">← ミニゲーム一覧</a>
+
+  <header class="hud">
+    <h1>玖球の地底くだり</h1>
+    <p class="tagline">足場をつたって、地下のずっと深くまでもぐろう!</p>
+    <div class="stats">
+      <div class="stat"><span class="stat-label">深さ</span><span class="stat-value" id="depth">0m</span></div>
+      <div class="stat"><span class="stat-label">残り</span><span class="stat-value" id="lives">♥♥♥</span></div>
+      <div class="stat"><span class="stat-label">最高記録</span><span class="stat-value" id="highScore">0m</span></div>
+    </div>
+  </header>
+
+  <div class="dig-wrap">
+    <canvas class="dig-canvas" id="canvas" aria-label="玖球の地底くだりのゲーム画面"></canvas>
+    <div class="overlay" id="overlay">
+      <div class="overlay-card">
+        <h2 id="overlayTitle">準備はいい?</h2>
+        <p id="overlayMsg">足場はどんどん上へのぼっていくよ。<br>左右に動いて下の足場へ飛びうつろう!<br>天井の土砂にぶつかったり、トゲ水晶に乗ったりすると♥が減るよ。<br>足場で待っている豹球に会うと♥が回復!</p>
+        <button class="btn" id="actionBtn">スタート</button>
+      </div>
+    </div>
+  </div>
+
+  <p class="hint">画面の左半分・右半分を押しているあいだ、その方向へ動く(キーボードは ← → か A D)。🍄キノコではねる、もろい砂はすぐくずれる、木の板は左右に動くよ。画面の下に落ちたらおしまい!</p>
+</div>
+
+<script src="mole-icon.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var HIGH_KEY = 'kyutama-dig-highscore';
+  // 画面はこの論理サイズで描き、表示サイズに合わせて拡大縮小する
+  var W = 400, H = 600;
+  var LIVES = 3;
+  var PW = 54;
+  var PH = PW * 592 / 624;
+  // 天井の土砂の下端。玖球の頭がここに触れるとダメージ
+  var TOP = 54;
+  var GRAVITY = 1500;
+  var MAX_FALL = 720;
+  var MOVE = 230;
+  var BOUNCE_VY = -640;
+  var PLAT_H = 14;
+  var GAP = 92;
+  var INVULN = 1.2;
+  var CRUMBLE_TIME = 0.45;
+  // スクロールした距離(px)をこの値で割ったものを深さ(m)として表示する
+  var PX_PER_M = 25;
+  var MILESTONE = 100;
+
+  var canvas = document.getElementById('canvas');
+  var ctx = canvas.getContext('2d');
+  var depthEl = document.getElementById('depth');
+  var livesEl = document.getElementById('lives');
+  var highScoreEl = document.getElementById('highScore');
+  var overlay = document.getElementById('overlay');
+  var overlayTitle = document.getElementById('overlayTitle');
+  var overlayMsg = document.getElementById('overlayMsg');
+  var actionBtn = document.getElementById('actionBtn');
+
+  var state = { playing: false, lives: LIVES, highScore: 0, scrolled: 0, time: 0, invuln: 0, milestone: 0 };
+  // player.y は足もとの高さ。on は乗っている足場、skip は天井に押されてすり抜け中の足場
+  var player = null;
+  // 足場は { x, y, w, type, vx, crumbleT, fallVy, leopard }。x は左端、y は上面
+  var platforms = [];
+  var popups = [];
+  var keys = { left: false, right: false };
+  var pointers = {};
+  var rafId = null;
+  var lastTs = 0;
+  var audioCtx = null;
+  var colors = {};
+
+  var moleImg = new Image();
+  moleImg.src = new URL('mole.png', MOLE_PNG_BASE).href;
+  moleImg.addEventListener('load', function () { if (!state.playing) render(); });
+  var leopardImg = new Image();
+  leopardImg.src = new URL('leopard.png', MOLE_PNG_BASE).href;
+  leopardImg.addEventListener('load', function () { if (!state.playing) render(); });
+
+  function loadHigh() {
+    try {
+      var v = parseInt(localStorage.getItem(HIGH_KEY), 10);
+      return isNaN(v) ? 0 : v;
+    } catch (e) { return 0; }
+  }
+  function saveHigh(v) {
+    try { localStorage.setItem(HIGH_KEY, String(v)); } catch (e) {}
+  }
+
+  function readColors() {
+    var cs = getComputedStyle(document.documentElement);
+    ['ink', 'accent'].forEach(function (name) {
+      colors[name] = cs.getPropertyValue('--' + name).trim();
+    });
+  }
+
+  function setupCanvas() {
+    var dpr = Math.min(window.devicePixelRatio || 1, 3);
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function ensureAudio() {
+    if (!audioCtx) {
+      try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+    } else if (audioCtx.state === 'suspended') {
+      try { audioCtx.resume(); } catch (e) {}
+    }
+  }
+
+  function playTone(type, from, to, dur, vol) {
+    if (!audioCtx) return;
+    try {
+      var t = audioCtx.currentTime;
+      var osc = audioCtx.createOscillator();
+      var gain = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(from, t);
+      osc.frequency.exponentialRampToValueAtTime(to, t + dur);
+      gain.gain.setValueAtTime(vol, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + dur + 0.02);
+    } catch (e) {}
+  }
+
+  function depthM() { return Math.floor(state.scrolled / PX_PER_M); }
+
+  // 深くなるほど足場がのぼってくるのが速くなる
+  function scrollSpeed() { return 70 + Math.min(depthM() * 0.35, 110); }
+
+  function popup(text, x, y, color, big) {
+    popups.push({ text: text, x: x, y: y, color: color, t: 0, big: !!big });
+  }
+
+  // 深くなるほど、やっかいな足場が出やすくなる
+  function pickType() {
+    var d = depthM();
+    var table = [
+      ['normal', 52],
+      ['spike', d < 15 ? 0 : 14 + Math.min(d / 40, 8)],
+      ['bounce', d < 8 ? 0 : 10],
+      ['crumble', d < 25 ? 0 : 12 + Math.min(d / 50, 6)],
+      ['move', d < 40 ? 0 : 10]
+    ];
+    var sum = 0;
+    table.forEach(function (r) { sum += r[1]; });
+    var roll = Math.random() * sum;
+    for (var i = 0; i < table.length; i++) {
+      roll -= table[i][1];
+      if (roll < 0) return table[i][0];
+    }
+    return 'normal';
+  }
+
+  function spawnPlatform(y) {
+    var w = 84 + Math.random() * 36;
+    var type = pickType();
+    // トゲ水晶ばかり続くと逃げ場がなくなるので、2つ続いたら次はふつうの足場にする
+    var last = platforms[platforms.length - 1];
+    var last2 = platforms[platforms.length - 2];
+    if (type === 'spike' && last && last.type === 'spike' && last2 && last2.type === 'spike') type = 'normal';
+    var p = {
+      x: 8 + Math.random() * (W - 16 - w), y: y, w: w, type: type,
+      vx: type === 'move' ? (Math.random() < 0.5 ? -1 : 1) * (50 + Math.random() * 40) : 0,
+      crumbleT: null, fallVy: 0, leopard: null
+    };
+    if (type === 'normal' && depthM() > 10 && Math.random() < 0.07) {
+      p.leopard = { used: false, t: 0, side: Math.random() < 0.5 ? 0.22 : 0.78 };
+    }
+    platforms.push(p);
+  }
+
+  function lowestY() {
+    var y = -Infinity;
+    // くずれて落ちていく足場は数えない
+    platforms.forEach(function (p) { if (p.crumbleT === null && p.y > y) y = p.y; });
+    return y;
+  }
+
+  function overlaps(p) {
+    return player.x > p.x - PW * 0.28 && player.x < p.x + p.w + PW * 0.28;
+  }
+
+  function hurt(msg) {
+    if (state.invuln > 0 || player.dead) return;
+    state.lives -= 1;
+    state.invuln = INVULN;
+    popup(msg, player.x, player.y - PH - 10, '#E8483F', true);
+    playTone('sawtooth', 320, 90, 0.35, 0.14);
+    updateHud();
+    if (state.lives <= 0) {
+      player.dead = true;
+      player.on = null;
+      player.vy = -320;
+    }
+  }
+
+  function land(p) {
+    player.vy = 0;
+    player.squash = 1;
+    if (p.type === 'bounce') {
+      player.vy = BOUNCE_VY;
+      player.y = p.y;
+      p.boing = 1;
+      playTone('sine', 300, 900, 0.18, 0.12);
+      return;
+    }
+    player.on = p;
+    player.y = p.y;
+    if (p.type === 'spike') {
+      hurt('いたっ!');
+    } else if (p.type === 'crumble') {
+      if (p.crumbleT === null) p.crumbleT = 0;
+      playTone('triangle', 260, 180, 0.12, 0.08);
+    } else {
+      playTone('triangle', 420, 520, 0.06, 0.06);
+    }
+  }
+
+  // 豹球のとなりに来ると♥を1つ分けてくれる。満タンなら応援だけ
+  function meetLeopard(p) {
+    var lx = p.x + p.w * p.leopard.side;
+    if (Math.abs(player.x - lx) > 34) return;
+    p.leopard.used = true;
+    if (state.lives < LIVES) {
+      state.lives += 1;
+      popup('♥ +1', lx, p.y - 60, '#FF6FA8', true);
+    } else {
+      popup('がんばって!', lx, p.y - 60, '#FF6FA8', true);
+    }
+    popup('♥', lx - 22, p.y - 40, '#FF6FA8');
+    popup('♥', lx + 22, p.y - 40, '#FF6FA8');
+    playTone('sine', 880, 1320, 0.22, 0.12);
+    updateHud();
+  }
+
+  function updateHud() {
+    depthEl.textContent = depthM() + 'm';
+    livesEl.textContent = state.lives > 0 ? new Array(state.lives + 1).join('♥') : '-';
+    highScoreEl.textContent = state.highScore + 'm';
+  }
+
+  function startGame() {
+    ensureAudio();
+    state.lives = LIVES;
+    state.scrolled = 0;
+    state.time = 0;
+    state.invuln = 0;
+    state.milestone = 0;
+    popups = [];
+    platforms = [];
+    var first = { x: W / 2 - 65, y: H * 0.42, w: 130, type: 'normal', vx: 0, crumbleT: null, fallVy: 0, leopard: null };
+    platforms.push(first);
+    while (lowestY() < H + GAP) spawnPlatform(lowestY() + GAP * (0.85 + Math.random() * 0.3));
+    player = { x: W / 2, y: first.y, vy: 0, on: first, skip: null, face: 1, squash: 0, dead: false };
+    updateHud();
+    overlay.hidden = true;
+    state.playing = true;
+    lastTs = performance.now();
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function endGame() {
+    state.playing = false;
+    cancelAnimationFrame(rafId);
+    render();
+    var d = depthM();
+    var isRecord = d > state.highScore;
+    if (isRecord) {
+      state.highScore = d;
+      saveHigh(state.highScore);
+    }
+    updateHud();
+    overlayTitle.textContent = 'ゲームオーバー!';
+    overlayMsg.innerHTML = '地下 <span class="result-score">' + d + 'm</span>' +
+      (isRecord ? '<br><span class="new-record">🎉 最高記録更新!</span>' : '<br>最高記録: ' + state.highScore + 'm');
+    actionBtn.textContent = 'もう一度あそぶ';
+    overlay.hidden = false;
+  }
+
+  function inputDir() {
+    var left = keys.left, right = keys.right;
+    Object.keys(pointers).forEach(function (id) {
+      if (pointers[id] < 0) left = true; else right = true;
+    });
+    return (right ? 1 : 0) - (left ? 1 : 0);
+  }
+
+  function tick(ts) {
+    var dt = Math.min((ts - lastTs) / 1000, 0.05);
+    lastTs = ts;
+    state.time += dt;
+    state.invuln = Math.max(0, state.invuln - dt);
+
+    var dy = player.dead ? 0 : scrollSpeed() * dt;
+    state.scrolled += dy;
+    var m = Math.floor(depthM() / MILESTONE) * MILESTONE;
+    if (m > state.milestone) {
+      state.milestone = m;
+      popup('地下' + m + 'm!', W / 2, H * 0.3, colors.accent, true);
+      playTone('sine', 660, 990, 0.25, 0.1);
+    }
+
+    platforms.forEach(function (p) {
+      p.y -= dy;
+      if (p.boing) p.boing = Math.max(0, p.boing - dt * 4);
+      if (p.leopard) p.leopard.t += dt;
+      if (p.vx) {
+        p.x += p.vx * dt;
+        if (p.x < 8 || p.x + p.w > W - 8) {
+          p.vx = -p.vx;
+          p.x = Math.max(8, Math.min(W - 8 - p.w, p.x));
+        }
+        if (player.on === p) player.x += p.vx * dt;
+      }
+      if (p.crumbleT !== null) {
+        p.crumbleT += dt;
+        if (p.crumbleT > CRUMBLE_TIME) {
+          p.fallVy += GRAVITY * dt;
+          p.y += p.fallVy * dt;
+          if (player.on === p) player.on = null;
+        }
+      }
+    });
+    platforms = platforms.filter(function (p) { return p.y > -40 && p.y < H + 200; });
+    while (lowestY() < H + GAP) spawnPlatform(lowestY() + GAP * (0.85 + Math.random() * 0.3));
+
+    var dir = player.dead ? 0 : inputDir();
+    if (dir) player.face = dir;
+    player.x = Math.max(PW * 0.4, Math.min(W - PW * 0.4, player.x + dir * MOVE * dt));
+    player.squash = Math.max(0, player.squash - dt * 5);
+
+    if (player.on && !overlaps(player.on)) player.on = null;
+    if (player.on) {
+      player.y = player.on.y;
+      player.vy = 0;
+      if (player.on.leopard && !player.on.leopard.used) meetLeopard(player.on);
+    } else {
+      var prevY = player.y;
+      player.vy = Math.min(MAX_FALL, player.vy + GRAVITY * dt);
+      player.y += player.vy * dt;
+      if (!player.dead && player.vy >= 0) {
+        for (var i = 0; i < platforms.length; i++) {
+          var p = platforms[i];
+          if (p === player.skip || p.crumbleT > CRUMBLE_TIME) continue;
+          // 足場もこのフレームで dy だけ上がっているので、その分を足して前の位置と比べる
+          if (prevY <= p.y + dy + 0.5 && player.y >= p.y && overlaps(p)) {
+            land(p);
+            break;
+          }
+        }
+      }
+    }
+    if (player.skip && (player.y > player.skip.y + 24 || platforms.indexOf(player.skip) < 0)) player.skip = null;
+
+    // 天井の土砂に頭が当たると、乗っていた足場からはじき落とされる
+    if (!player.dead && player.y - PH * 0.85 < TOP) {
+      hurt('ごつん!');
+      player.y = TOP + PH * 0.85;
+      if (player.on) player.skip = player.on;
+      player.on = null;
+      player.vy = Math.max(player.vy, 160);
+    }
+
+    if (player.y - PH > H) { endGame(); return; }
+
+    popups.forEach(function (p) { p.t += dt; });
+    popups = popups.filter(function (p) { return p.t < 1; });
+
+    updateHud();
+    render();
+    rafId = requestAnimationFrame(tick);
+  }
+
+  // ---- 描画 ----
+
+  // 深くなるほど地層の色が濃く、むらさきがかっていく
+  var STRATA = ['#B98552', '#A8774A', '#966A47', '#7F5D4A', '#6C5450', '#5A4A58', '#4B4262', '#3E3A66'];
+  var BAND = 70;
+
+  function drawUnderground() {
+    var off = state.scrolled * 0.6;
+    var first = Math.floor(off / BAND);
+    for (var k = first; k * BAND - off < H; k++) {
+      var y = k * BAND - off;
+      var c = STRATA[Math.min(Math.floor(k / 8), STRATA.length - 1)];
+      ctx.fillStyle = c;
+      ctx.fillRect(0, y, W, BAND + 1);
+      if (k % 2) {
+        ctx.fillStyle = 'rgba(255, 255, 255, .05)';
+        ctx.fillRect(0, y, W, BAND + 1);
+      }
+      // 地層ごとに決まった位置に小石をちらす
+      ctx.fillStyle = 'rgba(0, 0, 0, .14)';
+      for (var s = 0; s < 3; s++) {
+        var h = (k * 73 + s * 151) % 997;
+        ctx.beginPath();
+        ctx.ellipse((h * 7) % W, y + 12 + (h % (BAND - 24)), 5 + h % 6, 3 + h % 3, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  function drawCeiling() {
+    ctx.fillStyle = '#4E301B';
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(W, 0);
+    ctx.lineTo(W, TOP - 10);
+    // 土砂のでこぼこはゆっくり横に流れて、くずれてくる感じを出す
+    var shift = (state.time * 14) % 40;
+    for (var x = W + 40; x >= -40; x -= 20) {
+      var xx = x - shift;
+      ctx.lineTo(xx, TOP - 10 + ((Math.floor((x + 40) / 20) % 2) ? 12 : 0));
+    }
+    ctx.lineTo(0, TOP - 10);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#7A5232';
+    for (var r = 0; r < 7; r++) {
+      var rx = ((r * 67 + state.time * 14) % (W + 40)) - 20;
+      ctx.beginPath();
+      ctx.arc(rx, 16 + (r % 3) * 9, 7 + (r % 2) * 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function drawPlatform(p) {
+    var x = p.x, y = p.y;
+    if (p.type === 'crumble' && p.crumbleT !== null && p.crumbleT <= CRUMBLE_TIME) {
+      x += Math.sin(p.crumbleT * 80) * 2;
+    }
+    if (p.type === 'normal') {
+      ctx.fillStyle = '#6A4126';
+      roundRect(x, y, p.w, PLAT_H, 6);
+      ctx.fill();
+      ctx.fillStyle = '#A8743F';
+      roundRect(x, y, p.w, 6, 3);
+      ctx.fill();
+      // 木の根がぶらさがっている
+      ctx.strokeStyle = '#8C6239';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x + p.w * 0.3, y + PLAT_H);
+      ctx.quadraticCurveTo(x + p.w * 0.27, y + PLAT_H + 8, x + p.w * 0.32, y + PLAT_H + 13);
+      ctx.moveTo(x + p.w * 0.7, y + PLAT_H);
+      ctx.quadraticCurveTo(x + p.w * 0.74, y + PLAT_H + 6, x + p.w * 0.69, y + PLAT_H + 9);
+      ctx.stroke();
+    } else if (p.type === 'spike') {
+      ctx.fillStyle = '#6B6F7A';
+      roundRect(x, y, p.w, PLAT_H, 5);
+      ctx.fill();
+      var n = Math.floor(p.w / 16);
+      var step = p.w / n;
+      for (var i = 0; i < n; i++) {
+        var cx = x + step * (i + 0.5);
+        ctx.fillStyle = i % 2 ? '#B48CF0' : '#D6BCFF';
+        ctx.beginPath();
+        ctx.moveTo(cx - step * 0.4, y + 2);
+        ctx.lineTo(cx, y - 13 - (i % 2) * 4);
+        ctx.lineTo(cx + step * 0.4, y + 2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255, 255, 255, .5)';
+        ctx.beginPath();
+        ctx.moveTo(cx - step * 0.1, y);
+        ctx.lineTo(cx, y - 9 - (i % 2) * 4);
+        ctx.lineTo(cx + step * 0.05, y);
+        ctx.closePath();
+        ctx.fill();
+      }
+    } else if (p.type === 'bounce') {
+      var sq = (p.boing || 0) * 5;
+      ctx.fillStyle = '#F3E6D2';
+      ctx.fillRect(x + p.w / 2 - 9, y + 6, 18, PLAT_H);
+      ctx.fillStyle = '#FF7FA6';
+      ctx.beginPath();
+      ctx.ellipse(x + p.w / 2, y + 8 + sq, p.w / 2, 13 - sq, 0, Math.PI, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      [[0.3, 2], [0.55, -3], [0.75, 3]].forEach(function (d) {
+        ctx.beginPath();
+        ctx.arc(x + p.w * d[0], y + 3 + d[1] * 0.6 + sq, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    } else if (p.type === 'crumble') {
+      ctx.fillStyle = '#D8B57A';
+      roundRect(x, y, p.w, PLAT_H, 5);
+      ctx.fill();
+      ctx.strokeStyle = '#A9824A';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x + p.w * 0.25, y);
+      ctx.lineTo(x + p.w * 0.32, y + 7);
+      ctx.lineTo(x + p.w * 0.27, y + PLAT_H);
+      ctx.moveTo(x + p.w * 0.62, y);
+      ctx.lineTo(x + p.w * 0.56, y + 8);
+      ctx.lineTo(x + p.w * 0.64, y + PLAT_H);
+      ctx.stroke();
+    } else if (p.type === 'move') {
+      ctx.fillStyle = '#C98C48';
+      roundRect(x, y, p.w, PLAT_H - 2, 4);
+      ctx.fill();
+      ctx.strokeStyle = '#A06A30';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x + 6, y + 6);
+      ctx.lineTo(x + p.w - 6, y + 6);
+      ctx.stroke();
+      ctx.fillStyle = '#5A4A3A';
+      ctx.beginPath();
+      ctx.arc(x + 14, y + PLAT_H, 5, 0, Math.PI * 2);
+      ctx.arc(x + p.w - 14, y + PLAT_H, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (p.leopard && leopardImg.complete && leopardImg.naturalWidth) {
+      var lw = 46, lh = lw * leopardImg.naturalHeight / leopardImg.naturalWidth;
+      var hop = p.leopard.used ? Math.abs(Math.sin(p.leopard.t * 6)) * 5 : Math.abs(Math.sin(p.leopard.t * 2)) * 2;
+      ctx.drawImage(leopardImg, x + p.w * p.leopard.side - lw / 2, y - lh - hop, lw, lh);
+    }
+  }
+
+  function drawPlayer() {
+    if (!moleImg.complete || !moleImg.naturalWidth) return;
+    // ダメージ直後は点滅する
+    if (state.invuln > 0 && Math.floor(state.invuln * 12) % 2) return;
+    var s = player.squash;
+    var w = PW * (1 + s * 0.12), h = PH * (1 - s * 0.12);
+    ctx.save();
+    ctx.translate(player.x, player.y);
+    if (player.dead) ctx.rotate(state.time * 8);
+    ctx.scale(player.face < 0 ? -1 : 1, 1);
+    ctx.drawImage(moleImg, -w / 2, -h, w, h);
+    ctx.restore();
+  }
+
+  function render() {
+    if (!colors.ink) return;
+    drawUnderground();
+    platforms.forEach(drawPlatform);
+    if (player) drawPlayer();
+    drawCeiling();
+
+    popups.forEach(function (p) {
+      ctx.globalAlpha = 1 - p.t;
+      ctx.fillStyle = p.color;
+      ctx.font = '800 ' + (p.big ? 24 : 16) + 'px "Baloo 2", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.strokeStyle = 'rgba(255, 255, 255, .85)';
+      ctx.lineWidth = 4;
+      ctx.strokeText(p.text, p.x, p.y - p.t * 36);
+      ctx.fillText(p.text, p.x, p.y - p.t * 36);
+      ctx.globalAlpha = 1;
+    });
+
+    // 押す場所の目印
+    if (state.playing) {
+      ctx.fillStyle = 'rgba(255, 255, 255, .18)';
+      ctx.font = '800 28px "Baloo 2", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('◀', 30, H - 30);
+      ctx.fillText('▶', W - 30, H - 30);
+    }
+  }
+
+  // ---- 入力 ----
+
+  function pointerSide(e) {
+    var r = canvas.getBoundingClientRect();
+    return e.clientX - r.left < r.width / 2 ? -1 : 1;
+  }
+
+  actionBtn.addEventListener('click', startGame);
+  canvas.addEventListener('pointerdown', function (e) {
+    if (!state.playing) return;
+    e.preventDefault();
+    ensureAudio();
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+    pointers[e.pointerId] = pointerSide(e);
+  });
+  canvas.addEventListener('pointermove', function (e) {
+    if (pointers[e.pointerId] !== undefined) pointers[e.pointerId] = pointerSide(e);
+  });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(function (type) {
+    canvas.addEventListener(type, function (e) { delete pointers[e.pointerId]; });
+  });
+  canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+  function setKey(e, down) {
+    var k = e.code;
+    if (k === 'ArrowLeft' || k === 'KeyA') keys.left = down;
+    else if (k === 'ArrowRight' || k === 'KeyD') keys.right = down;
+    else return;
+    if (state.playing) e.preventDefault();
+  }
+  window.addEventListener('keydown', function (e) { setKey(e, true); });
+  window.addEventListener('keyup', function (e) { setKey(e, false); });
+  window.addEventListener('blur', function () {
+    keys.left = keys.right = false;
+    pointers = {};
+  });
+
+  try {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+      readColors();
+      render();
+    });
+  } catch (e) {}
+
+  function boot(data) {
+    state.highScore = (data && typeof data.highScore === 'number') ? data.highScore : loadHigh();
+    readColors();
+    setupCanvas();
+    updateHud();
+    platforms = [
+      { x: W / 2 - 65, y: H * 0.42, w: 130, type: 'normal', vx: 0, crumbleT: null, fallVy: 0, leopard: null },
+      { x: 40, y: H * 0.58, w: 100, type: 'bounce', vx: 0, crumbleT: null, fallVy: 0, leopard: null },
+      { x: 230, y: H * 0.72, w: 110, type: 'normal', vx: 0, crumbleT: null, fallVy: 0, leopard: { used: false, t: 0, side: 0.7 } },
+      { x: 90, y: H * 0.88, w: 100, type: 'spike', vx: 0, crumbleT: null, fallVy: 0, leopard: null }
+    ];
+    player = { x: W / 2, y: H * 0.42, vy: 0, on: null, skip: null, face: 1, squash: 0, dead: false };
+    render();
+  }
+
+  try {
+    if (window.claude && window.claude.hot && window.claude.hot.snapshot) {
+      window.claude.hot.snapshot(function () { return { highScore: state.highScore }; });
+    }
+    if (window.claude && window.claude.hot && window.claude.hot.ready) {
+      window.claude.hot.ready(boot);
+    } else {
+      boot(window.claude && window.claude.hot ? window.claude.hot.data : null);
+    }
+  } catch (e) {
+    boot(null);
+  }
+})();
+</script>
+</body>
+</html>

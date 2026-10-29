@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>玖球のころころ合体</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Nunito:wght@400;600;700;800&display=swap">
+<link rel="stylesheet" href="../style.css">
+<style>
+  .merge-wrap { position: relative; width: 100%; max-width: 420px; }
+
+  .merge-canvas {
+    position: relative; z-index: 1;
+    display: block;
+    width: 100%; height: auto;
+    aspect-ratio: 400 / 600;
+    border-radius: 18px;
+    box-shadow: 0 8px 18px var(--shadow);
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: pointer;
+  }
+
+  .chain {
+    position: relative; z-index: 1;
+    display: flex; align-items: flex-end; justify-content: center; flex-wrap: wrap; gap: 2px;
+    width: 100%; max-width: 420px;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 14px;
+    padding: 8px 10px;
+    box-sizing: border-box;
+  }
+  .chain-label { width: 100%; text-align: center; font-size: .75rem; font-weight: 800; color: var(--ink-soft); }
+  .chain img { display: block; height: auto; }
+  .chain-arrow { font-size: .7rem; color: var(--ink-soft); padding-bottom: 6px; }
+</style>
+</head>
+<body>
+
+<div class="scene">
+  <div class="sky-deco" aria-hidden="true">
+    <div class="orb"></div>
+    <div class="stars"></div>
+  </div>
+
+  <a class="back-link" href="../index.html">← ミニゲーム一覧</a>
+
+  <header class="hud">
+    <h1>玖球のころころ合体</h1>
+    <p class="tagline">同じ色の玖球をくっつけて、大きな紫の玖球をめざそう!</p>
+    <div class="stats">
+      <div class="stat"><span class="stat-label">スコア</span><span class="stat-value" id="score">0</span></div>
+      <div class="stat"><span class="stat-label">ハイスコア</span><span class="stat-value" id="highScore">0</span></div>
+    </div>
+  </header>
+
+  <div class="merge-wrap">
+    <canvas class="merge-canvas" id="canvas" aria-label="玖球のころころ合体のゲーム画面"></canvas>
+    <div class="overlay" id="overlay">
+      <div class="overlay-card">
+        <h2 id="overlayTitle">準備はいい?</h2>
+        <p id="overlayMsg">玖球を落として、同じ色どうしをくっつけよう!<br>くっつくと1つ大きな玖球に合体するよ。<br>いちばん大きいのは紫の玖球。<br>紫の玖球どうしが合体すると大ボーナス!<br>玖球が赤い線より上にあふれたらおしまい。</p>
+        <button class="btn" id="actionBtn">スタート</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="chain" id="chain" aria-label="合体の順番"></div>
+
+  <p class="hint">指(マウス)を左右に動かして位置を決め、はなす(クリックする)と落とす。キーボードは ← → で移動、スペースで落とす。</p>
+</div>
+
+<script src="mole-icon.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var HIGH_KEY = 'kyutama-merge-highscore';
+  // 画面はこの論理サイズで描き、表示サイズに合わせて拡大縮小する
+  var W = 400, H = 600;
+  var LEFT = 18, RIGHT = W - 18, FLOOR = H - 18;
+  var DROP_Y = 72;
+  var DANGER_Y = 116;
+  // 赤い線より上にこの秒数いつづけたらゲームオーバー
+  var DANGER_TIME = 2;
+  var GRAVITY = 1400;
+  var SUBSTEPS = 8;
+  var DROP_COOLDOWN = 0.55;
+  // 落とす玖球は小さいほうから DROP_TIERS 種類だけ
+  var DROP_TIERS = 5;
+  var FINAL_BONUS = 100;
+  var KEY_SPEED = 320;
+
+  // 小さい順。いちばん最後(いちばん大きい)は紫の玖球。png があるものは画像、ないものは色違いのSVG
+  var TIERS = [
+    { r: 15, color: '#F4A9C0', name: 'ピンク' },
+    { r: 21, color: '#FFC48A', name: 'オレンジ' },
+    { r: 28, color: '#FFE27A', name: 'きいろ' },
+    { r: 35, color: '#C8EB8A', name: 'きみどり' },
+    { r: 43, png: 'green', name: 'みどり' },
+    { r: 52, color: '#8EC6F1', name: 'みずいろ' },
+    { r: 61, png: 'red', name: 'あか' },
+    { r: 71, png: 'brown', name: 'ちゃいろ' },
+    { r: 83, png: '', name: 'むらさき' }
+  ];
+  // 合体してできた段階ごとの得点
+  var POINTS = [0, 3, 6, 10, 15, 21, 28, 36, 45];
+
+  // 画像(156×148 の座標系)のうち、体の中心と半径。当たり判定の円をここに合わせて絵を置く
+  var BODY_CX = 78 / 156, BODY_CY = 98 / 148, BODY_R = 46 / 156;
+
+  var canvas = document.getElementById('canvas');
+  var ctx = canvas.getContext('2d');
+  var scoreEl = document.getElementById('score');
+  var highScoreEl = document.getElementById('highScore');
+  var overlay = document.getElementById('overlay');
+  var overlayTitle = document.getElementById('overlayTitle');
+  var overlayMsg = document.getElementById('overlayMsg');
+  var actionBtn = document.getElementById('actionBtn');
+  var chainEl = document.getElementById('chain');
+
+  var state = { playing: false, score: 0, highScore: 0, time: 0, cooldown: 0, danger: 0, over: false };
+  // 玖球は { tier, x, y, vx, vy, ang, age, pop }
+  var balls = [];
+  var popups = [];
+  var sparks = [];
+  var aimX = W / 2;
+  var current = 0, next = 0;
+  var keys = { left: false, right: false };
+  var rafId = null;
+  var lastTs = 0;
+  var audioCtx = null;
+  var colors = {};
+
+  function svgUrl(i, color) {
+    // <img> の中のSVGでは CSS 変数が使えないので、線の色を直接書きこむ
+    var svg = moleSvgMarkup('merge' + i, color)
+      .replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" width="624" height="592" ')
+      .replace(/var\(--ink\)/g, '#3A2A1D');
+    return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  }
+
+  TIERS.forEach(function (t, i) {
+    var img = new Image();
+    if (t.png !== undefined) {
+      img.src = new URL(t.png ? 'mole-' + t.png + '.png' : 'mole.png', MOLE_PNG_BASE).href;
+    } else {
+      img.src = svgUrl(i, t.color);
+    }
+    img.addEventListener('load', function () { if (!state.playing) render(); });
+    t.img = img;
+  });
+
+  function buildChain() {
+    var html = '<span class="chain-label">合体の順番</span>';
+    TIERS.forEach(function (t, i) {
+      if (i) html += '<span class="chain-arrow">▶</span>';
+      var w = Math.round(14 + t.r * 0.42);
+      html += '<img src="' + t.img.src + '" width="' + w + '" height="' + Math.round(w * 592 / 624) + '" alt="' + t.name + 'の玖球" draggable="false">';
+    });
+    chainEl.innerHTML = html;
+  }
+
+  function loadHigh() {
+    try {
+      var v = parseInt(localStorage.getItem(HIGH_KEY), 10);
+      return isNaN(v) ? 0 : v;
+    } catch (e) { return 0; }
+  }
+  function saveHigh(v) {
+    try { localStorage.setItem(HIGH_KEY, String(v)); } catch (e) {}
+  }
+
+  function readColors() {
+    var cs = getComputedStyle(document.documentElement);
+    ['sky-top', 'sky-mid', 'ink', 'accent', 'card-bg', 'card-border'].forEach(function (name) {
+      colors[name] = cs.getPropertyValue('--' + name).trim();
+    });
+  }
+
+  function setupCanvas() {
+    var dpr = Math.min(window.devicePixelRatio || 1, 3);
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function ensureAudio() {
+    if (!audioCtx) {
+      try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+    } else if (audioCtx.state === 'suspended') {
+      try { audioCtx.resume(); } catch (e) {}
+    }
+  }
+
+  function playTone(type, from, to, dur, vol) {
+    if (!audioCtx) return;
+    try {
+      var t = audioCtx.currentTime;
+      var osc = audioCtx.createOscillator();
+      var gain = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(from, t);
+      osc.frequency.exponentialRampToValueAtTime(to, t + dur);
+      gain.gain.setValueAtTime(vol, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + dur + 0.02);
+    } catch (e) {}
+  }
+
+  function randomDropTier() { return Math.floor(Math.random() * DROP_TIERS); }
+
+  function clampAim(x, tier) {
+    var r = TIERS[tier].r;
+    return Math.max(LEFT + r, Math.min(RIGHT - r, x));
+  }
+
+  function popup(text, x, y, color, big) {
+    popups.push({ text: text, x: x, y: y, color: color, t: 0, big: !!big });
+  }
+
+  function burst(x, y, color, n) {
+    for (var i = 0; i < n; i++) {
+      var a = Math.random() * Math.PI * 2, s = 80 + Math.random() * 160;
+      sparks.push({ x: x, y: y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, t: 0, color: color });
+    }
+  }
+
+  function drop() {
+    if (!state.playing || state.over || state.cooldown > 0) return;
+    ensureAudio();
+    var x = clampAim(aimX, current);
+    balls.push({ tier: current, x: x, y: DROP_Y, vx: 0, vy: 0, ang: 0, age: 0, pop: 0 });
+    current = next;
+    next = randomDropTier();
+    state.cooldown = DROP_COOLDOWN;
+    playTone('sine', 520, 340, 0.1, 0.07);
+  }
+
+  function merge(a, b) {
+    var x = (a.x + b.x) / 2, y = (a.y + b.y) / 2;
+    balls.splice(balls.indexOf(a), 1);
+    balls.splice(balls.indexOf(b), 1);
+    if (a.tier === TIERS.length - 1) {
+      // 紫の玖球どうしは合体するとお祝いして消える
+      state.score += FINAL_BONUS;
+      popup('だいせいこう! +' + FINAL_BONUS, x, y - 40, colors.accent, true);
+      burst(x, y, '#B4A3E8', 40);
+      burst(x, y, '#FF6FA8', 20);
+      playTone('sine', 660, 1320, 0.5, 0.14);
+      playTone('triangle', 880, 1760, 0.6, 0.1);
+      return;
+    }
+    var tier = a.tier + 1;
+    balls.push({
+      tier: tier, x: x, y: y, vx: (a.vx + b.vx) / 2, vy: (a.vy + b.vy) / 2 - 60,
+      ang: 0, age: 1, pop: 1
+    });
+    state.score += POINTS[tier];
+    popup('+' + POINTS[tier], x, y - TIERS[tier].r, colors.ink);
+    burst(x, y, '#FFFFFF', 8 + tier * 2);
+    if (tier === TIERS.length - 1) {
+      popup('紫の玖球!', x, y - TIERS[tier].r - 26, '#8C76C9', true);
+    }
+    playTone('sine', 300 + tier * 90, 500 + tier * 120, 0.16, 0.1);
+  }
+
+  function step(dt) {
+    var i, j, a, b;
+    for (i = 0; i < balls.length; i++) {
+      a = balls[i];
+      a.vy += GRAVITY * dt;
+      a.x += a.vx * dt;
+      a.y += a.vy * dt;
+    }
+    // 位置をずらして重なりを解き、ぶつかる向きの速さを弱める
+    for (i = 0; i < balls.length; i++) {
+      a = balls[i];
+      var ra = TIERS[a.tier].r;
+      for (j = i + 1; j < balls.length; j++) {
+        b = balls[j];
+        var rb = TIERS[b.tier].r;
+        var dx = b.x - a.x, dy = b.y - a.y;
+        var min = ra + rb;
+        var d2 = dx * dx + dy * dy;
+        if (d2 >= min * min) continue;
+        var d = Math.sqrt(d2) || 0.01;
+        var nx = dx / d, ny = dy / d;
+        var ma = ra * ra, mb = rb * rb;
+        var over = (min - d) * 0.8;
+        a.x -= nx * over * mb / (ma + mb);
+        a.y -= ny * over * mb / (ma + mb);
+        b.x += nx * over * ma / (ma + mb);
+        b.y += ny * over * ma / (ma + mb);
+        var rel = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
+        if (rel < 0) {
+          var imp = -(1.15) * rel / (1 / ma + 1 / mb);
+          a.vx -= imp * nx / ma; a.vy -= imp * ny / ma;
+          b.vx += imp * nx / mb; b.vy += imp * ny / mb;
+        }
+        // こすれ合うときの摩擦
+        var tx = -ny, ty = nx;
+        var slide = (b.vx - a.vx) * tx + (b.vy - a.vy) * ty;
+        var f = slide * 0.04;
+        a.vx += tx * f * mb / (ma + mb); a.vy += ty * f * mb / (ma + mb);
+        b.vx -= tx * f * ma / (ma + mb); b.vy -= ty * f * ma / (ma + mb);
+      }
+    }
+    for (i = 0; i < balls.length; i++) {
+      a = balls[i];
+      var r = TIERS[a.tier].r;
+      if (a.x - r < LEFT) { a.x = LEFT + r; if (a.vx < 0) a.vx *= -0.2; }
+      if (a.x + r > RIGHT) { a.x = RIGHT - r; if (a.vx > 0) a.vx *= -0.2; }
+      if (a.y + r > FLOOR) {
+        a.y = FLOOR - r;
+        if (a.vy > 0) a.vy *= -0.15;
+        a.vx *= 0.985;
+      }
+      a.vx *= 0.9995;
+      a.vy *= 0.9995;
+      a.ang += a.vx * dt / r;
+    }
+  }
+
+  function findMerge() {
+    for (var i = 0; i < balls.length; i++) {
+      var a = balls[i];
+      for (var j = i + 1; j < balls.length; j++) {
+        var b = balls[j];
+        if (a.tier !== b.tier) continue;
+        var dx = b.x - a.x, dy = b.y - a.y, min = TIERS[a.tier].r * 2 + 1.5;
+        if (dx * dx + dy * dy <= min * min) {
+          merge(a, b);
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function updateHud() {
+    scoreEl.textContent = state.score;
+    highScoreEl.textContent = state.highScore;
+  }
+
+  function startGame() {
+    ensureAudio();
+    state.score = 0;
+    state.time = 0;
+    state.cooldown = 0;
+    state.danger = 0;
+    state.over = false;
+    balls = [];
+    popups = [];
+    sparks = [];
+    current = randomDropTier();
+    next = randomDropTier();
+    aimX = W / 2;
+    updateHud();
+    overlay.hidden = true;
+    state.playing = true;
+    lastTs = performance.now();
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function endGame() {
+    state.playing = false;
+    cancelAnimationFrame(rafId);
+    render();
+    var isRecord = state.score > state.highScore;
+    if (isRecord) {
+      state.highScore = state.score;
+      saveHigh(state.highScore);
+    }
+    updateHud();
+    var biggest = balls.reduce(function (m, b) { return Math.max(m, b.tier); }, 0);
+    overlayTitle.textContent = 'ゲームオーバー!';
+    overlayMsg.innerHTML = 'いちばん大きかったのは' + TIERS[biggest].name + 'の玖球<br>スコア: <span class="result-score">' + state.score + '</span>' +
+      (isRecord ? '<br><span class="new-record">🎉 ハイスコア更新!</span>' : '<br>ハイスコア: ' + state.highScore);
+    actionBtn.textContent = 'もう一度あそぶ';
+    overlay.hidden = false;
+  }
+
+  function tick(ts) {
+    var dt = Math.min((ts - lastTs) / 1000, 0.05);
+    lastTs = ts;
+    state.time += dt;
+    state.cooldown = Math.max(0, state.cooldown - dt);
+
+    var dir = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+    if (dir) aimX = clampAim(aimX + dir * KEY_SPEED * dt, current);
+
+    if (!state.over) {
+      var h = dt / SUBSTEPS;
+      for (var s = 0; s < SUBSTEPS; s++) {
+        step(h);
+        // 合体は1回ずつ処理し、できた玖球もすぐ次の合体に参加できるようにする
+        while (findMerge()) {}
+      }
+      balls.forEach(function (b) {
+        b.age += dt;
+        b.pop = Math.max(0, b.pop - dt * 4);
+      });
+
+      // 落としたばかりの玖球はのぞいて、赤い線より上にはみ出している玖球があるか
+      var above = balls.some(function (b) { return b.age > 1 && b.y - TIERS[b.tier].r < DANGER_Y; });
+      state.danger = above ? state.danger + dt : Math.max(0, state.danger - dt * 2);
+      if (state.danger >= DANGER_TIME) {
+        state.over = true;
+        state.overT = 0;
+        playTone('sawtooth', 300, 70, 0.7, 0.15);
+      }
+    } else {
+      state.overT += dt;
+      if (state.overT > 1.2) { endGame(); return; }
+    }
+
+    sparks.forEach(function (p) {
+      p.t += dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vy += 300 * dt;
+    });
+    sparks = sparks.filter(function (p) { return p.t < 0.6; });
+    popups.forEach(function (p) { p.t += dt; });
+    popups = popups.filter(function (p) { return p.t < 1; });
+
+    updateHud();
+    render();
+    rafId = requestAnimationFrame(tick);
+  }
+
+  // ---- 描画 ----
+
+  function drawMole(tier, x, y, r, ang, alpha) {
+    var img = TIERS[tier].img;
+    if (!img.complete || !img.naturalWidth) return;
+    var w = r / BODY_R, hh = w * 148 / 156;
+    ctx.save();
+    if (alpha !== undefined) ctx.globalAlpha = alpha;
+    ctx.translate(x, y);
+    if (ang) ctx.rotate(ang);
+    ctx.drawImage(img, -w * BODY_CX, -hh * BODY_CY, w, hh);
+    ctx.restore();
+  }
+
+  function drawBox() {
+    var sky = ctx.createLinearGradient(0, 0, 0, H);
+    sky.addColorStop(0, colors['sky-top']);
+    sky.addColorStop(1, colors['sky-mid']);
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, W, H);
+
+    // 木の箱
+    ctx.fillStyle = 'rgba(255, 248, 236, .55)';
+    ctx.fillRect(LEFT, DANGER_Y - 30, RIGHT - LEFT, FLOOR - DANGER_Y + 30);
+    ctx.fillStyle = '#C98C48';
+    ctx.fillRect(LEFT - 10, DANGER_Y - 30, 10, FLOOR - DANGER_Y + 40);
+    ctx.fillRect(RIGHT, DANGER_Y - 30, 10, FLOOR - DANGER_Y + 40);
+    ctx.fillRect(LEFT - 10, FLOOR, RIGHT - LEFT + 20, 12);
+
+    // 赤い線。あふれそうなときは点滅する
+    var warn = state.danger > 0;
+    ctx.strokeStyle = warn && Math.floor(state.time * 8) % 2 ? '#FF2A1F' : 'rgba(232, 72, 63, .6)';
+    ctx.lineWidth = warn ? 3 : 2;
+    ctx.setLineDash([8, 6]);
+    ctx.beginPath();
+    ctx.moveTo(LEFT, DANGER_Y);
+    ctx.lineTo(RIGHT, DANGER_Y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function render() {
+    if (!colors.ink) return;
+    drawBox();
+
+    // 落とす位置のガイド線と、次に落とす玖球
+    if (state.playing && !state.over) {
+      var x = clampAim(aimX, current);
+      ctx.strokeStyle = 'rgba(58, 42, 29, .18)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x, DROP_Y);
+      ctx.lineTo(x, FLOOR);
+      ctx.stroke();
+      if (state.cooldown <= 0) drawMole(current, x, DROP_Y, TIERS[current].r, 0);
+    }
+
+    balls.forEach(function (b) {
+      var r = TIERS[b.tier].r * (1 + Math.sin(b.pop * Math.PI) * 0.15);
+      drawMole(b.tier, b.x, b.y, r, b.ang);
+    });
+
+    sparks.forEach(function (p) {
+      ctx.globalAlpha = 1 - p.t / 0.6;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+
+    // つぎの玖球
+    ctx.fillStyle = 'rgba(255, 255, 255, .75)';
+    ctx.beginPath();
+    ctx.arc(W - 40, 40, 28, 0, Math.PI * 2);
+    ctx.fill();
+    drawMole(next, W - 40, 42, Math.min(TIERS[next].r, 18), 0);
+    ctx.fillStyle = colors.ink;
+    ctx.font = '800 12px "Nunito", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('つぎ', W - 40, 80);
+
+    popups.forEach(function (p) {
+      ctx.globalAlpha = 1 - p.t;
+      ctx.fillStyle = p.color;
+      ctx.font = '800 ' + (p.big ? 24 : 16) + 'px "Baloo 2", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.strokeStyle = 'rgba(255, 255, 255, .85)';
+      ctx.lineWidth = 4;
+      ctx.strokeText(p.text, p.x, p.y - p.t * 36);
+      ctx.fillText(p.text, p.x, p.y - p.t * 36);
+      ctx.globalAlpha = 1;
+    });
+  }
+
+  // ---- 入力 ----
+
+  function pointerX(e) {
+    var r = canvas.getBoundingClientRect();
+    return (e.clientX - r.left) * W / r.width;
+  }
+
+  actionBtn.addEventListener('click', startGame);
+  canvas.addEventListener('pointerdown', function (e) {
+    if (!state.playing) return;
+    e.preventDefault();
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+    aimX = pointerX(e);
+  });
+  canvas.addEventListener('pointermove', function (e) {
+    if (!state.playing) return;
+    // マウスはボタンを押していなくても位置を追い、指は触れているあいだだけ追う
+    if (e.pointerType === 'mouse' || e.buttons) aimX = pointerX(e);
+  });
+  canvas.addEventListener('pointerup', function (e) {
+    if (!state.playing) return;
+    aimX = pointerX(e);
+    drop();
+  });
+  canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+  function setKey(e, down) {
+    var k = e.code;
+    if (k === 'ArrowLeft' || k === 'KeyA') keys.left = down;
+    else if (k === 'ArrowRight' || k === 'KeyD') keys.right = down;
+    else if (k === 'Space') { if (down && !e.repeat) drop(); }
+    else return;
+    if (state.playing) e.preventDefault();
+  }
+  window.addEventListener('keydown', function (e) { setKey(e, true); });
+  window.addEventListener('keyup', function (e) { setKey(e, false); });
+  window.addEventListener('blur', function () { keys.left = keys.right = false; });
+
+  try {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+      readColors();
+      render();
+    });
+  } catch (e) {}
+
+  function boot(data) {
+    state.highScore = (data && typeof data.highScore === 'number') ? data.highScore : loadHigh();
+    readColors();
+    setupCanvas();
+    buildChain();
+    updateHud();
+    // スタート前の画面には、いくつか玖球を並べておく
+    balls = [
+      { tier: 8, x: 110, y: FLOOR - 83, vx: 0, vy: 0, ang: 0, age: 0, pop: 0 },
+      { tier: 6, x: 260, y: FLOOR - 61, vx: 0, vy: 0, ang: 0, age: 0, pop: 0 },
+      { tier: 4, x: 350, y: FLOOR - 43, vx: 0, vy: 0, ang: 0, age: 0, pop: 0 },
+      { tier: 2, x: 230, y: FLOOR - 122 - 28, vx: 0, vy: 0, ang: 0, age: 0, pop: 0 }
+    ];
+    next = 0;
+    render();
+  }
+
+  try {
+    if (window.claude && window.claude.hot && window.claude.hot.snapshot) {
+      window.claude.hot.snapshot(function () { return { highScore: state.highScore }; });
+    }
+    if (window.claude && window.claude.hot && window.claude.hot.ready) {
+      window.claude.hot.ready(boot);
+    } else {
+      boot(window.claude && window.claude.hot ? window.claude.hot.data : null);
+    }
+  } catch (e) {
+    boot(null);
+  }
+})();
+</script>
+</body>
+</html>
