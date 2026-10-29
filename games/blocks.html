@@ -508,18 +508,6 @@
     ctx.lineWidth = Math.max(1, size * 0.05);
     ctx.strokeStyle = 'rgba(80, 60, 140, .45)';
     ctx.stroke();
-    // 上のつやと、左右のとがった耳
-    ctx.fillStyle = 'rgba(255, 255, 255, .35)';
-    ctx.fillRect(x + size * 0.18, y + size * 0.08, size * 0.64, size * 0.1);
-    ctx.fillStyle = '#E9E1FB';
-    ctx.beginPath();
-    ctx.moveTo(x + size * 0.12, y + size * 0.34);
-    ctx.lineTo(x + size * 0.2, y + size * 0.1);
-    ctx.lineTo(x + size * 0.3, y + size * 0.3);
-    ctx.moveTo(x + size * 0.88, y + size * 0.34);
-    ctx.lineTo(x + size * 0.8, y + size * 0.1);
-    ctx.lineTo(x + size * 0.7, y + size * 0.3);
-    ctx.fill();
 
     ctx.translate(x + size / 2, y + size * 0.5);
     ctx.scale(size / 66, size / 66);
